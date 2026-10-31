@@ -1,5 +1,6 @@
 # AWS credentials: the standard chain (export AWS_PROFILE=<your-profile> if you use named profiles).
 AWS_REGION  ?= us-east-1
+# Gateway image tag; override with: make plan TAG=v0.3.1
 TAG         ?= v0.3.0
 TF          := terraform -chdir=terraform/envs/dev
 PY          := .venv/bin/python
@@ -58,13 +59,13 @@ validate:
 	$(TF) init -input=false -backend=false >/dev/null && $(TF) validate
 
 plan:
-	$(TF) plan
+	$(TF) plan -var image_tag=$(TAG)
 
 apply:
-	$(TF) apply
+	$(TF) apply -var image_tag=$(TAG)
 
 destroy:
-	$(TF) destroy
+	$(TF) destroy -var image_tag=$(TAG)
 
 push:                 ## build ARM64 image and push to ECR
 	$(eval REPO := $(shell $(TF) output -raw ecr_repository_url))

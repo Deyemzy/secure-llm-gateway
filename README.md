@@ -120,7 +120,9 @@ Dev tokens are disabled by default. The gateway refuses to start if `DEV_TOKENS_
 ## Deploy
 
 ```bash
-cd terraform/envs/dev && cp terraform.tfvars.example terraform.tfvars && terraform init
+# run make from the repo root; plan/apply/destroy pass image_tag from TAG (default in the Makefile)
+export AWS_PROFILE=<your-profile> AWS_PAGER=""
+cd terraform/envs/dev && terraform init
 terraform apply -target=module.gateway.aws_ecr_repository.gateway
 cd ../../.. && make push TAG=v0.3.0 && make apply
 scripts/cognito.sh add-user alice platform
