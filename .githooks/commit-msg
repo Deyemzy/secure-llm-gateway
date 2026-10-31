@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Commit message rules for this repo (enabled with: make hooks):
+#   - one line only
+#   - no AI-tool attribution (co-author trailers, "Generated with ..." footers)
+set -euo pipefail
+lines=$(grep -v '^#' "$1" | sed '/^[[:space:]]*$/d' | wc -l | tr -d ' ')
+if [ "$lines" -ne 1 ]; then
+  echo "commit-msg: commit messages must be exactly one line (got $lines non-empty lines)." >&2
+  exit 1
+fi
+if grep -qiE '^[[:space:]]*co-authored-by:.*(claude|anthropic)|generated with .*claude|claude\.(ai|com)|noreply@anthropic\.com' "$1"; then
+  echo "commit-msg: AI attribution found in the commit message; remove it:" >&2
+  grep -niE 'co-authored-by:.*(claude|anthropic)|generated with .*claude|claude\.(ai|com)|noreply@anthropic\.com' "$1" >&2
+  exit 1
+fi

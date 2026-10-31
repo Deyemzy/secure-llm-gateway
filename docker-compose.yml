@@ -1,0 +1,39 @@
+# Local and CI dependencies. `docker compose up -d --wait valkey`
+#
+# deploy/valkey/users.acl (ACL files cannot contain comments):
+#   default      disabled, as in AWS
+#   slg-gateway  MUST match redis_acl in terraform/modules/gateway/main.tf; the budget tests run as
+#                this user in CI and tests/unit/test_budget.py::test_acl_matches_terraform checks they match
+#   slg-test     test-only admin for fixtures (cleanup, TTL assertions); never exists in AWS
+services:
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    command: ["valkey-server", "--aclfile", "/etc/valkey/users.acl", "--save", "", "--appendonly", "no"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./deploy/valkey/users.acl:/etc/valkey/users.acl:ro
+    healthcheck:
+      test: ["CMD", "valkey-cli", "--user", "slg-test", "--pass", "test-only", "--no-auth-warning", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  # Async replica, as in ElastiCache with redis_replicas >= 1. Used for the replica-ack (WAIT)
+  # and failover-injection tests.
+  valkey-replica:
+    image: valkey/valkey:8.1-alpine
+    command: ["valkey-server", "--aclfile", "/etc/valkey/users.acl", "--save", "", "--appendonly", "no",
+              "--replicaof", "valkey", "6379", "--masteruser", "slg-test", "--masterauth", "test-only"]
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - ./deploy/valkey/users.acl:/etc/valkey/users.acl:ro
+    depends_on:
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli --user slg-test --pass test-only --no-auth-warning info replication | grep -q master_link_status:up"]
+      interval: 2s
+      timeout: 2s
+      retries: 15

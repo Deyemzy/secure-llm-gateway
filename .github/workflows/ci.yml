@@ -1,0 +1,82 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: "8.30.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history: secrets in old commits count too
+      - name: Install gitleaks (pinned, checksum-verified)
+        run: |
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfLO "$base/$tarball"
+          curl -sSfL "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt" | grep " $tarball\$" | sha256sum -c -
+          tar -xzf "$tarball" gitleaks && sudo mv gitleaks /usr/local/bin/
+      - name: Scan full git history
+        run: gitleaks git --log-opts="--all" --redact --no-banner -v .
+      - name: Commit messages are one line
+        run: |
+          bad=0
+          for c in $(git rev-list --all); do
+            n=$(git log -1 --format=%B "$c" | sed '/^[[:space:]]*$/d' | wc -l)
+            if [ "$n" -ne 1 ]; then echo "::error::$c has a $n-line message"; bad=1; fi
+          done
+          exit $bad
+      - name: No AI attribution in any commit message
+        run: |
+          if git log --all --format='%H%n%B' | grep -iE 'co-authored-by:.*(claude|anthropic)|generated with .*claude|noreply@anthropic\.com'; then
+            echo "::error::AI attribution found in commit history"; exit 1
+          fi
+
+  test:
+    needs: secrets
+    runs-on: ubuntu-latest
+    env:
+      # Admin connection for fixtures; the budget code itself connects as the least-privilege
+      # slg-gateway user, so the production ACL is exercised against a real Valkey.
+      REDIS_TEST_URL: redis://slg-test:test-only@127.0.0.1:6379/0
+      REDIS_TEST_APP_URL: redis://slg-gateway:local-dev-only@127.0.0.1:6379/0
+      REDIS_TEST_REPLICA_URL: redis://slg-test:test-only@127.0.0.1:6380/0
+      REQUIRE_REDIS: "1"   # ledger, concurrency, replica-ack and failover tests must run, not skip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python deps
+        run: pip install -r gateway/requirements.txt pytest httpx openai
+      - name: Start Valkey primary + replica
+        run: docker compose up -d --wait
+      - name: Tests + evidence report
+        run: python scripts/evidence.py
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-evidence
+          path: docs/evidence/test-evidence.md
+      - name: Stop Valkey
+        if: always()
+        run: docker compose down
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.12.2
+      - run: terraform fmt -recursive -check terraform
+      - run: terraform -chdir=terraform/envs/dev init -backend=false -input=false
+      - run: terraform -chdir=terraform/envs/dev validate

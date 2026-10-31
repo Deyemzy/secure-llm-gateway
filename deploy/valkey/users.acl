@@ -1,0 +1,3 @@
+user default off
+user slg-gateway on >local-dev-only ~slg:* resetchannels -@all +get +set +del +incr +incrby +expire +hget +hmget +hset +zadd +zrem +zrangebyscore +eval +evalsha +script|load +script|exists +wait +ping +info +client|setinfo
+user slg-test on >test-only ~* &* +@all

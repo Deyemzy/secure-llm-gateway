@@ -1,0 +1,71 @@
+# Gateway policy. Source of truth in git; Terraform publishes it to SSM Parameter Store
+# (/slg-dev/policy) and the gateway reads it from there. Invalid or missing => gateway won't start.
+
+# Client-facing alias -> Bedrock Converse model. Prices are USD per million tokens and drive
+# budget reservation; every model a team can use MUST have both prices (checked at startup).
+# VERIFY against https://aws.amazon.com/bedrock/pricing/ — Claude rows are Anthropic first-party
+# list prices, the Llama row is a placeholder.
+# max_tokens caps keep responses inside API Gateway's 29 s integration timeout.
+models:
+  fast:
+    model_id: us.anthropic.claude-haiku-4-5-20251001-v1:0
+    input_usd_per_mtok: 1.00
+    output_usd_per_mtok: 5.00
+    max_tokens: 2048
+    sampling: [temperature, top_p]
+    sampling_exclusive: true      # Claude 4.5-generation models reject temperature + top_p together
+  smart:
+    model_id: us.anthropic.claude-sonnet-5-5
+    input_usd_per_mtok: 2.00
+    output_usd_per_mtok: 10.00
+    max_tokens: 1024
+    sampling: []                  # Sonnet 5.5 rejects non-default sampling values
+  open:
+    model_id: us.meta.llama4-maverick-17b-instruct-v1:0
+    input_usd_per_mtok: 0.25      # PLACEHOLDER — verify before adding `open` to any team
+    output_usd_per_mtok: 1.00     # PLACEHOLDER
+    max_tokens: 2048
+    sampling: [temperature, top_p]
+
+# Team comes from the token: exactly one cognito:groups entry (admin-managed, never user-editable).
+# `open` stays out of every allowlist until its Bedrock prices are verified.
+teams:
+  platform:
+    models: [fast, smart]
+    user_requests_per_minute: 30
+  research:
+    models: [fast]
+    user_requests_per_minute: 20
+
+# Monthly budgets in USD, per UTC calendar month.
+# User limit precedence: users.<username> > teams.<team>.user_monthly_usd > default.user_monthly_usd
+# Team limit precedence: teams.<team>.team_monthly_usd > default.team_monthly_usd
+budgets:
+  default:
+    team_monthly_usd: 50.00
+    user_monthly_usd: 5.00
+  teams:
+    platform:
+      team_monthly_usd: 200.00
+      user_monthly_usd: 25.00
+    research:
+      team_monthly_usd: 40.00
+  users:
+    alice:
+      monthly_usd: 60.00
+
+# Local screening before anything leaves the gateway. Prompt-attack and content
+# filtering is the Guardrail's job; these are cheap, deterministic backstops.
+screening:
+  # Blocked on input, redacted on output.
+  secrets:
+    aws_access_key: '\b(AKIA|ASIA)[0-9A-Z]{16}\b'
+    private_key: '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'
+    github_token: '\bgh[pousr]_[A-Za-z0-9]{36,}\b'
+    slack_token: '\bxox[abposr]-[A-Za-z0-9-]{10,}\b'
+  # Redacted on input and output.
+  pii:
+    email: '\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+    us_ssn: '\b(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}\b'
+    credit_card: '\b(?:\d[ -]?){13,19}\b'    # Luhn-validated in code
+    phone_us: '\b(?:\+1[ .-]?)?\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}\b'
