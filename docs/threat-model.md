@@ -1,4 +1,4 @@
-# Threat Model — Secure LLM Gateway
+# Threat Model - Secure LLM Gateway
 
 **Scope:** the dev deployment in `terraform/envs/dev`. Authenticated users (Cognito, one team each) call an OpenAI-compatible API subset. The gateway enforces identity, request shape, per-team model policy and monthly spend budgets, then calls Amazon Bedrock Converse with a Guardrail attached.
 **Method:** STRIDE per trust boundary, cross-referenced to the OWASP Top 10 for LLM Applications (2025).
@@ -29,7 +29,7 @@ Each step either passes the request on or stops it with the response shown.
 | 3 | Resolve model alias (`fast`/`smart`/`open`) against team policy; sampling support; credential/PII screening | `403 model_not_allowed`/`team_not_allowed`/`max_tokens_not_allowed`, `400 unsupported_parameter`, `400 sensitive_data` |
 | 4 | Reserve worst-case cost against **monthly** team + user budgets (Lua), plus per-user rpm | `429 budget_exceeded` (not retryable), `429 rate_limited` (Retry-After), `503 dependency_unavailable` |
 | 5 | Bedrock Converse with Guardrail | `400 blocked_by_guardrail`, `429 upstream_throttled` (Retry-After, not charged), `503 upstream_unavailable`, `502 upstream_error` |
-| 6 | Settle actual cost, write metadata log | — |
+| 6 | Settle actual cost, write metadata log | - |
 | 7 | Return | `200` + `X-Request-Id`, `X-Budget-Remaining-USD` |
 
 Errors use the OpenAI shape `{"error": {message, type, code, param}}` and carry `x-should-retry`, so SDKs don't auto-retry budget or validation failures.
@@ -55,17 +55,17 @@ Errors use the OpenAI shape `{"error": {message, type, code, param}}` and carry 
 
 Each threat is tagged with its STRIDE category and its OWASP LLM ID. The Test column names the file under `tests/` that covers it.
 
-### B1 — Internet → edge
+### B1 - Internet → edge
 
 | # | Threat | Controls | Test |
 |---|---|---|---|
 | T1 | **S** Unauthenticated access | The Cognito user pool authorizer on both methods requires the `aws.cognito.signin.user.admin` scope, so only access tokens pass. That scope also lets users edit their own attributes, which is safe only because team never comes from an attribute (T8a), and the app client may write only `name`. Unknown paths return 404 (`MISSING_AUTHENTICATION_TOKEN` is remapped). Gateway responses use the OpenAI error shape | `abuse/test_live_gateway.py::test_401` |
-| T2 | **S** Credential stuffing or account takeover | WAF IP-reputation list and per-IP rate limits. Cognito: admin-created users only, 14-character passwords, optional TOTP MFA, admin-only recovery, `prevent_user_existence_errors` | — |
+| T2 | **S** Credential stuffing or account takeover | WAF IP-reputation list and per-IP rate limits. Cognito: admin-created users only, 14-character passwords, optional TOTP MFA, admin-only recovery, `prevent_user_existence_errors` | - |
 | T3 | **D** Floods (LLM10 Unbounded Consumption) | WAF rate limits per IP (600 per 5 min) and per `Authorization` header (300 per 5 min). Stage throttling at 20 rps steady and 40 burst. Per-user rpm is enforced atomically in Valkey. Spend is capped by monthly budgets (T9) | `unit/test_budget.py::test_rate_limit` |
 | T4 | **D** Oversized bodies | WAF blocks `Content-Length` ≥ 300 kB. The gateway rejects bodies over 256 KiB, over 32k characters of content, or over 50 messages | `test_oversized_body_400` |
-| T5 | **I** Bodies or tokens in logs | Stage `data_trace_enabled = false`. The access log format has no body. WAF logs redact `Authorization` | — |
+| T5 | **I** Bodies or tokens in logs | Stage `data_trace_enabled = false`. The access log format has no body. WAF logs redact `Authorization` | - |
 
-### B2 — API Gateway → gateway
+### B2 - API Gateway → gateway
 
 | # | Threat | Controls | Test |
 |---|---|---|---|
@@ -82,7 +82,7 @@ Each threat is tagged with its STRIDE category and its OWASP LLM ID. The Test co
 | T15 | **T** Prompt injection (LLM01); calls that skip the guardrail | Guardrail `PROMPT_ATTACK` filter on every Converse call. IAM **explicitly denies** `InvokeModel` and `InvokeModelWithResponseStream` (which Converse and ConverseStream authorize as) unless `bedrock:GuardrailIdentifier` is our guardrail's ARN. The gateway sends the ARN, and startup refuses a non-ARN value. Other entry points (async invoke, batch jobs, agents, knowledge bases) aren't granted at all. No tools are exposed (LLM06). Evidence: an IAM simulation matrix, plus real Converse calls from a one-off task inside the VPC | `test_guardrail_block_400_and_charged`, `scripts/verify_iam.py`, `scripts/verify_guardrail.sh`, `test_probe.py` |
 | T16 | **I** Errors leak internals or echo input | Validation errors name the field only, never the value. Bedrock error codes are logged, not returned. Auth failures return one generic message | `test_rejections_do_not_echo_values`, `test_upstream_failures_release_hold` |
 
-### B3 — Dependencies and output
+### B3 - Dependencies and output
 
 | # | Threat | Controls | Test |
 |---|---|---|---|
@@ -94,7 +94,7 @@ Each threat is tagged with its STRIDE category and its OWASP LLM ID. The Test co
 | T22 | **T** Ledger tampering from elsewhere in the VPC | The Valkey SG admits only the task SG. TLS is required. The `default` user is disabled. The app user is limited to `~slg:*` and the commands the scripts need; it cannot `FLUSHALL`, `KEYS`, `SCAN`, `CONFIG`, `REPLICAOF` or `ACL`. The compose ACL mirrors it, CI runs the ledger as that user, and a test fails if the two drift | `test_acl_matches_terraform`, `test_valkey_gateway_user_is_least_privilege` |
 | T23 | **R** Disputes over who spent what | The `X-Request-Id` a client sees matches the `request_id` in a metadata-only log line (user, team, model, tokens, reserved and actual USD, code). API Gateway access logs record username and IP | `test_request_id_on_errors_and_in_logs`, `test_logs_are_metadata_only` |
 
-### B4 — Operator and supply chain
+### B4 - Operator and supply chain
 
 | # | Threat | Controls |
 |---|---|---|
@@ -111,7 +111,7 @@ Each threat is tagged with its STRIDE category and its OWASP LLM ID. The Test co
 | A user (left, compromised) | `scripts/cognito.sh disable-user` (disable + global sign-out) | **≤ 15 min** | Refresh fails at once. The last access token expires within its 15-minute lifetime, and the gateway rejects any token whose `exp - iat` exceeds that |
 | A user's team membership (moved or removed from a group) | Cognito admin group change | **≤ 15 min** | `cognito:groups` is fixed in the token until it expires (≤ 15 min). The new team applies at the next refresh |
 | A model or a team (policy change) | Edit `policy.yaml` → `terraform apply` → SSM | **≤ 60 s** normally (refresh interval) | Each task reloads the policy every 60 s |
-| …the same, if the new policy can't be loaded (invalid, SSM unreachable) | — | **≤ 15 min** | The last valid policy keeps being enforced and alarms immediately. After `POLICY_MAX_STALE_S` = 900 s without a valid refresh, **every** request is rejected (`503 policy_unavailable`), so a stale policy can never outlive the window |
+| …the same, if the new policy can't be loaded (invalid, SSM unreachable) | - | **≤ 15 min** | The last valid policy keeps being enforced and alarms immediately. After `POLICY_MAX_STALE_S` = 900 s without a valid refresh, **every** request is rejected (`503 policy_unavailable`), so a stale policy can never outlive the window |
 | A user's or team's remaining budget, **by spending it** | Usage reaches the limit | **immediately** (next reservation) | Checked atomically against the ledger on every request; requests already holding a reservation finish within their hold |
 | A user's or team's budget **limit** (lowered, or set to 0) | Edit `budgets` in `policy.yaml` → `terraform apply` → SSM | **≤ 60 s** normally; **≤ 15 min** if the new policy can't be loaded | A limit is policy: it takes effect at the next policy refresh (60 s). If the refresh fails, the last valid limit stays in force until `POLICY_MAX_STALE_S` (900 s), after which every request is rejected |
 | An OAuth app client | Remove it from `JWT_CLIENT_IDS` / Cognito | **≤ 15 min** | Its issued tokens expire within their lifetime |

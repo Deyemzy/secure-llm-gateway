@@ -3,7 +3,7 @@
 
 # Client-facing alias -> Bedrock Converse model. Prices are USD per million tokens and drive
 # budget reservation; every model a team can use MUST have both prices (checked at startup).
-# VERIFY against https://aws.amazon.com/bedrock/pricing/ — Claude rows are Anthropic first-party
+# VERIFY against https://aws.amazon.com/bedrock/pricing/ - Claude rows are Anthropic first-party
 # list prices, the Llama row is a placeholder.
 # max_tokens caps keep responses inside API Gateway's 29 s integration timeout.
 models:
@@ -22,7 +22,7 @@ models:
     sampling: []                  # Sonnet 5.5 rejects non-default sampling values
   open:
     model_id: us.meta.llama4-maverick-17b-instruct-v1:0
-    input_usd_per_mtok: 0.25      # PLACEHOLDER — verify before adding `open` to any team
+    input_usd_per_mtok: 0.25      # PLACEHOLDER - verify before adding `open` to any team
     output_usd_per_mtok: 1.00     # PLACEHOLDER
     max_tokens: 2048
     sampling: [temperature, top_p]

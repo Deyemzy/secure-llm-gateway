@@ -111,7 +111,7 @@ def main() -> int:
         ok = bool(hits) and all(st == "pass" for _, st in hits)
         claims_ok &= ok
         names = sorted({n.split("[")[0] for n, _ in hits})
-        lines.append(f"| {claim} | {', '.join(f'`{n}`' for n in names) or '—'} ({len(hits)} cases) | "
+        lines.append(f"| {claim} | {', '.join(f'`{n}`' for n in names) or '-'} ({len(hits)} cases) | "
                      f"{'✅' if ok else '❌'} |")
     if total["skip"]:
         lines += ["", "Skipped:", *[f"- `{c}::{n}`" for c, n, st in cases if st == "skip"]]

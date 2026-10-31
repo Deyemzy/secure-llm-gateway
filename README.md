@@ -67,7 +67,7 @@ Errors use OpenAI's error shape and carry `x-should-retry`, so SDKs retry thrott
 | 3 | Resolve model alias against policy | 403 |
 | 4 | Reserve budget in Valkey | 429 budget exceeded |
 | 5 | Converse with Guardrail | 400 blocked, 429 throttled (Retry-After, not charged) |
-| 6 | Settle actual cost, log metadata | — |
+| 6 | Settle actual cost, log metadata | - |
 | 7 | Return | 200 |
 
 If a dependency is down, the gateway returns 503 instead of letting requests through. If its configuration is missing, invalid, or has an allowed model without a price, it refuses to start.

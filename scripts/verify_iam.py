@@ -85,7 +85,7 @@ def main() -> int:
 
     out = ROOT / "docs/evidence/iam-simulation.md"
     out.parent.mkdir(parents=True, exist_ok=True)
-    lines = [f"# IAM simulation — gateway task role\n",
+    lines = [f"# IAM simulation - gateway task role\n",
              f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `scripts/verify_iam.py` against `{role}`.\n",
              "Simulation checks the policy logic with the context keys shown; runtime behaviour is "
              "checked separately by `scripts/verify_guardrail.sh`.\n",

@@ -308,23 +308,48 @@ def test_valkey_ttls(admin):
     assert admin.zscore(INDEX_KEY, "ttl") is None                   # closed holds leave the index
 
 
-def replica():
+FAILOVER_WAIT_MS = 2_000  # these tests prove data survives failover, not the 200 ms production timeout
+
+
+def replica(admin):
+    """Replica client, guaranteed in sync: the primary must get a real WAIT acknowledgement from it.
+    Called at the start of every replica test, so no test depends on an earlier one's cleanup."""
     import redis
     url = os.environ.get("REDIS_TEST_REPLICA_URL")
     if not url:
         if os.environ.get("REQUIRE_REDIS"):
             pytest.fail("REQUIRE_REDIS is set but REDIS_TEST_REPLICA_URL is not")
         pytest.skip("REDIS_TEST_REPLICA_URL not set")
-    return redis.Redis.from_url(url)
+    rep = redis.Redis.from_url(url)
+    _wait_in_sync(admin)
+    return rep
+
+
+def _wait_in_sync(admin, deadline_s: float = 20.0):
+    import time
+    end = time.monotonic() + deadline_s
+    while time.monotonic() < end:
+        admin.set("slg:sync-probe", "1")
+        if int(admin.execute_command("WAIT", 1, 500)) >= 1:
+            admin.delete("slg:sync-probe")
+            return
+        time.sleep(0.2)
+    pytest.fail("replica never acknowledged a write (not attached / not in sync)")
+
+
+def _reattach(rep, admin):
+    """Undo an injected failover: make the replica follow the primary again, fully resynced."""
+    rep.execute_command("REPLICAOF", "valkey", "6379")
+    _wait_in_sync(admin)
 
 
 def test_valkey_replica_ack_gate(admin):
     """With min_replica_acks=1 the hold is confirmed on the replica before the model call; asking
     for more replicas than exist must report not-durable (the gateway then fails closed: 503)."""
     import redis
-    rep = replica()
+    rep = replica(admin)
     _, app_url = redis_urls()
-    b = RedisBudget(redis.Redis.from_url(app_url), min_replica_acks=1)
+    b = RedisBudget(redis.Redis.from_url(app_url), min_replica_acks=1, wait_timeout_ms=FAILOVER_WAIT_MS)
     r = reserve(b, "durable").reservation
     assert b.begin(r) and b.wait_replicated()
     assert rep.hget(r.resv_key, "state") == b"invoking" and int(rep.get(r.user_key)) == 40_000
@@ -337,11 +362,11 @@ def test_valkey_crash_after_durable_preinvoke_write_then_failover(admin):
     Bedrock call -> primary fails over. The promoted replica holds the 'invoking' record, and the
     reconciler running against it keeps the full hold charged (never refunds an unknown outcome)."""
     import redis
-    import time
-    rep_admin = replica()
+    rep_admin = replica(admin)
     _, app_url = redis_urls()
     clock = Clock()
-    b = RedisBudget(redis.Redis.from_url(app_url), clock=clock, min_replica_acks=1)
+    b = RedisBudget(redis.Redis.from_url(app_url), clock=clock, min_replica_acks=1,
+                    wait_timeout_ms=FAILOVER_WAIT_MS)
     r = reserve(b, "durable-crash", 40_000).reservation
     assert b.begin(r) and b.wait_replicated()
     # --- worker dies here: no settle, no Bedrock call ---
@@ -354,11 +379,7 @@ def test_valkey_crash_after_durable_preinvoke_write_then_failover(admin):
         [o] = [x for x in promoted.reconcile() if x.request_id == "durable-crash"]
         assert o.outcome == "expired_charged" and int(rep_admin.get(r.user_key)) == 40_000
     finally:
-        rep_admin.execute_command("REPLICAOF", "valkey", "6379")
-        for _ in range(50):
-            if b"master_link_status:up" in rep_admin.execute_command("INFO", "replication"):
-                break
-            time.sleep(0.1)
+        _reattach(rep_admin, admin)
 
 
 def test_valkey_wait_timeout_fails_closed_end_to_end(admin, verifier):
@@ -375,7 +396,7 @@ def test_valkey_wait_timeout_fails_closed_end_to_end(admin, verifier):
     from app.main import Deps, create_app
     from app.policy import PolicyStore, file_source
     from conftest import POLICY_PATH, FakeConverse, auth, chat_body
-    replica()
+    replica(admin)
     _, app_url = redis_urls()
     fake, logs = FakeConverse(), io.StringIO()
     budget = RedisBudget(redis.Redis.from_url(app_url), min_replica_acks=2, wait_timeout_ms=100)
@@ -394,9 +415,9 @@ def test_valkey_failover_keeps_acknowledged_holds(admin):
     """Failure injection: promote the replica (as a failover would) right after a WAIT-acknowledged
     reservation. The new primary must have the hold and the counters: no under-count."""
     import redis
-    rep = replica()
+    rep = replica(admin)
     _, app_url = redis_urls()
-    b = RedisBudget(redis.Redis.from_url(app_url), min_replica_acks=1)
+    b = RedisBudget(redis.Redis.from_url(app_url), min_replica_acks=1, wait_timeout_ms=FAILOVER_WAIT_MS)
     results = [reserve(b, f"fo-{i}", 10_000) for i in range(5)]
     for r in results:
         assert r.ok and b.begin(r.reservation) and b.wait_replicated()
@@ -408,12 +429,7 @@ def test_valkey_failover_keeps_acknowledged_holds(admin):
         assert all(rep.hget(r.reservation.resv_key, "state") == b"invoking" for r in results)
         assert rep.zcard(INDEX_KEY) >= 5                              # reconciler can still find them
     finally:
-        import time
-        rep.execute_command("REPLICAOF", "valkey", "6379")
-        for _ in range(50):  # wait for the resync so later tests see a healthy replica
-            if b"master_link_status:up" in rep.execute_command("INFO", "replication"):
-                break
-            time.sleep(0.1)
+        _reattach(rep, admin)
 
 
 @pytest.mark.parametrize("cmd", [("FLUSHALL",), ("KEYS", "*"), ("CONFIG", "GET", "*"), ("SET", "other:key", "1"),
