@@ -27,8 +27,12 @@ jobs:
         run: gitleaks git --log-opts="--all" --redact --no-banner -v .
       - name: Commit messages are one line
         run: |
+          # 7c5a3e0: GitHub's two-line merge commit for PR #2, made before the repo switched to
+          # squash-only merges (PR title, blank body). The only exception; every other commit must be one line.
+          allow="7c5a3e05bf6ac9110f6b87fa7688c38b6bc7766e"
           bad=0
           for c in $(git rev-list --all); do
+            case " $allow " in *" $c "*) continue ;; esac
             n=$(git log -1 --format=%B "$c" | sed '/^[[:space:]]*$/d' | wc -l)
             if [ "$n" -ne 1 ]; then echo "::error::$c has a $n-line message"; bad=1; fi
           done
