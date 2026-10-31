@@ -126,6 +126,14 @@ Tests:
 - `test_lowered_budget_limit_applies_at_next_refresh`
 - `test_budget_exceeded_429_not_retryable` (spending to the limit is immediate)
 
+## 2b. Findings from live testing
+
+Issues found by running the test suites against the deployed stack (2026-10-31), not by review.
+
+| ID | Finding | Impact | Fix | Evidence |
+|---|---|---|---|---|
+| L1 | **Test output can leak secrets.** When a live abuse test failed, pytest printed the `live` fixture's value in its failure report, including part of the Cognito access token. That output lands in terminals, CI logs and anything they are pasted into | A partial bearer token in logs. It was a dedicated test user's token and expired within 15 minutes, but the same mechanism would leak a full token or any secret held in a fixture | The `live` fixture returns a `LiveTarget` whose repr shows `token='<redacted>'`, and the token is a `Secret` str whose repr never shows its value. The test user's password is generated per run, used once and never printed. Treat test fixtures and CI logs as a secret-exposure path | `tests/conftest.py` (`Secret`, `LiveTarget`). Checked with a deliberately failing test: the secret appears 0 times in the output |
+
 ## 3. Residual risks
 
 | ID | Risk | Status / next step |
