@@ -1,0 +1,18 @@
+# Applies if anyone builds with the repo root as context (the supported build uses gateway/).
+.dev/
+.env*
+*.pem
+**/*.pem
+**/*.key
+tests/
+terraform/
+.git/
+.github/
+.venv/
+**/__pycache__/
+**/*.pyc
+docs/
+scripts/
+deploy/
+*.tfstate*
+*.tfvars

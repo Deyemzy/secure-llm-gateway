@@ -1,0 +1,18 @@
+# Allowlist: the image needs only these (see the COPY lines in the Dockerfile).
+*
+!Dockerfile
+!requirements.txt
+!app/
+!app/**
+
+# Never in an image, even if added under app/ by mistake.
+**/.dev/
+**/.env*
+**/*.pem
+**/*.key
+**/tests/
+**/terraform/
+**/.git/
+**/__pycache__/
+**/*.pyc
+**/.venv/

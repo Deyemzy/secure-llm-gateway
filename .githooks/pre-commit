@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Secret scan of the staged changes. Blocks the commit on any finding, and also when gitleaks is
+# missing (fail closed). Enable once per clone with: make hooks
+set -euo pipefail
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "pre-commit: gitleaks not installed (brew install gitleaks); refusing to commit unscanned changes." >&2
+  echo "            Bypass only if you are certain: git commit --no-verify" >&2
+  exit 1
+fi
+exec gitleaks git --pre-commit --staged --redact --no-banner -v
