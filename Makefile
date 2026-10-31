@@ -1,11 +1,11 @@
 # AWS credentials: the standard chain (export AWS_PROFILE=<your-profile> if you use named profiles).
 AWS_REGION  ?= us-east-1
 # Gateway image tag; override with: make plan TAG=v0.3.1
-TAG         ?= v0.3.0
+TAG         ?= v0.3.1
 TF          := terraform -chdir=terraform/envs/dev
 PY          := .venv/bin/python
 
-.PHONY: hooks secrets-scan venv test test-redis test-live evidence verify-iam verify-guardrail run-local valkey-up valkey-down fmt validate plan apply destroy push redeploy logs
+.PHONY: test-live-aws init bootstrap-init hooks secrets-scan venv test test-redis test-live evidence verify-iam verify-guardrail run-local valkey-up valkey-down fmt validate plan apply destroy push redeploy logs
 
 VALKEY_ENV := REDIS_TEST_URL=redis://slg-test:test-only@127.0.0.1:6379/0 \
               REDIS_TEST_APP_URL=redis://slg-gateway:local-dev-only@127.0.0.1:6379/0 \
@@ -44,6 +44,9 @@ verify-iam:           ## post-deploy: IAM simulation matrix -> docs/evidence/iam
 verify-guardrail:     ## post-deploy: real Converse calls from inside the VPC -> docs/evidence/guardrail-probe.md
 	scripts/verify_guardrail.sh
 
+test-live-aws:        ## black-box abuse tests against the deployed API (sets up test user + token)
+	scripts/live_test.sh
+
 test-live:            ## black-box abuse tests: GATEWAY_URL + GATEWAY_TOKEN
 	$(PY) -m pytest -q -m live
 
@@ -55,8 +58,22 @@ run-local:            ## gateway on :8080 with dev JWTs, in-memory budget, real 
 fmt:
 	terraform fmt -recursive terraform
 
+# Remote state: bucket and key are derived from the account at init time, never committed.
+ACCOUNT      = $(shell aws sts get-caller-identity --query Account --output text)
+STATE_BUCKET = slg-tfstate-$(ACCOUNT)-$(AWS_REGION)
+STATE_KMS    = $(shell aws kms describe-key --key-id alias/slg-tfstate --region $(AWS_REGION) --query KeyMetadata.Arn --output text)
+BACKEND      = -backend-config="bucket=$(STATE_BUCKET)" -backend-config="region=$(AWS_REGION)" \
+               -backend-config="encrypt=true" -backend-config="kms_key_id=$(STATE_KMS)" \
+               -backend-config="use_lockfile=true"
+
+init:                 ## init envs/dev against the S3 state bucket (add MIGRATE=1 to move local state)
+	$(TF) init -input=false $(BACKEND) -backend-config="key=envs/dev/terraform.tfstate" $(if $(MIGRATE),-migrate-state -force-copy,)
+
+bootstrap-init:       ## init terraform/bootstrap against the same bucket (key bootstrap/terraform.tfstate)
+	terraform -chdir=terraform/bootstrap init -input=false $(BACKEND) -backend-config="key=bootstrap/terraform.tfstate" $(if $(MIGRATE),-migrate-state -force-copy,)
+
 validate:
-	$(TF) init -input=false -backend=false >/dev/null && $(TF) validate
+	$(TF) validate
 
 plan:
 	$(TF) plan -var image_tag=$(TAG)

@@ -23,7 +23,10 @@ VERSION = os.environ["BEDROCK_GUARDRAIL_VERSION"]
 ALLOWED_PROFILE = os.environ.get("PROBE_MODEL", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
 OTHER_PROFILE = os.environ.get("PROBE_OTHER_MODEL", "us.anthropic.claude-opus-5-5")
 DIRECT_MODEL = ALLOWED_PROFILE.split(".", 1)[1]           # foundation model id, no inference profile
-OTHER_GUARDRAIL = GUARDRAIL.rsplit("/", 1)[0] + "/notours0000"
+# A REAL second guardrail: the stack's decoy (scripts/verify_guardrail.sh passes its ARN). A made-up
+# ARN is rejected as invalid (ValidationException) before IAM's verdict is visible.
+OTHER_GUARDRAIL = os.environ.get("PROBE_OTHER_GUARDRAIL_ARN")
+OTHER_VERSION = os.environ.get("PROBE_OTHER_GUARDRAIL_VERSION", "DRAFT")
 
 
 def call(model: str, guardrail: dict | None) -> str:
@@ -47,11 +50,14 @@ def main() -> int:
     cases = [
         ("allowlisted profile + our guardrail", ALLOWED_PROFILE, ours, "allowed"),
         ("allowlisted profile, no guardrail", ALLOWED_PROFILE, None, "AccessDeniedException"),
-        ("allowlisted profile, another guardrail", ALLOWED_PROFILE,
-         {"guardrailIdentifier": OTHER_GUARDRAIL, "guardrailVersion": "1"}, "AccessDeniedException"),
+        ("allowlisted profile, decoy guardrail", ALLOWED_PROFILE,
+         {"guardrailIdentifier": OTHER_GUARDRAIL, "guardrailVersion": OTHER_VERSION}, "AccessDeniedException"),
         ("direct foundation model + our guardrail", DIRECT_MODEL, ours, "AccessDeniedException"),
         ("non-allowlisted profile + our guardrail", OTHER_PROFILE, ours, "AccessDeniedException"),
     ]
+    if not OTHER_GUARDRAIL:
+        print(json.dumps({"probe": "guardrail", "error": "PROBE_OTHER_GUARDRAIL_ARN not set"}), flush=True)
+        return 2
     ok = True
     for name, model, guardrail, expect in cases:
         got = call(model, guardrail)

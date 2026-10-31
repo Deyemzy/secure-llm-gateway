@@ -1,8 +1,8 @@
 # Test evidence
 
-Generated 2026-10-31 18:29 UTC by `scripts/evidence.py` (Python 3.14.2, budget store: valkey 8.1.11).
+Generated 2026-10-31 20:00 UTC by `scripts/evidence.py` (Python 3.14.2, budget store: valkey 8.1.11).
 
-**301 passed, 0 failed, 0 skipped.** Ledger tests run against both the in-memory store and the real Lua scripts on Valkey, as the least-privilege `slg-gateway` user.
+**302 passed, 0 failed, 0 skipped.** Ledger tests run against both the in-memory store and the real Lua scripts on Valkey, as the least-privilege `slg-gateway` user.
 
 | Behaviour demonstrated | Tests | Result |
 |---|---|---|

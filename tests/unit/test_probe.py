@@ -6,6 +6,7 @@ import json
 from botocore.exceptions import ClientError
 
 ARN = "arn:aws:bedrock:us-east-1:123456789012:guardrail/abc123"
+OTHER = "arn:aws:bedrock:us-east-1:123456789012:guardrail/other999"
 
 
 class FakeBedrock:
@@ -18,9 +19,13 @@ class FakeBedrock:
         raise ClientError({"Error": {"Code": "ThrottlingException"}}, "Converse")  # authorized, no capacity
 
 
-def run(monkeypatch, capsys, fake):
+def run(monkeypatch, capsys, fake, other=OTHER):
     monkeypatch.setenv("BEDROCK_GUARDRAIL_ID", ARN)
     monkeypatch.setenv("BEDROCK_GUARDRAIL_VERSION", "1")
+    if other:
+        monkeypatch.setenv("PROBE_OTHER_GUARDRAIL_ARN", other)
+    else:
+        monkeypatch.delenv("PROBE_OTHER_GUARDRAIL_ARN", raising=False)
     import app.probe as probe
     probe = importlib.reload(probe)
     monkeypatch.setattr(probe.boto3, "client", lambda *a, **k: fake)
@@ -42,3 +47,8 @@ def test_probe_fails_when_guardrail_not_enforced(monkeypatch, capsys):
     code, rows = run(monkeypatch, capsys, Lax())
     assert code == 1 and rows[-1]["summary"] == "FAIL"
     assert any(r.get("case") == "allowlisted profile, no guardrail" and not r["pass"] for r in rows)
+
+
+def test_probe_refuses_to_run_without_a_real_second_guardrail(monkeypatch, capsys):
+    code, rows = run(monkeypatch, capsys, FakeBedrock(), other=None)
+    assert code == 2 and "PROBE_OTHER_GUARDRAIL_ARN" in rows[0]["error"]

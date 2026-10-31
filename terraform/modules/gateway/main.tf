@@ -298,7 +298,8 @@ resource "aws_ecs_task_definition" "gateway" {
   }
 
   volume {
-    name = "tmp"
+    name                = "tmp"
+    configure_at_launch = false
   }
 
   container_definitions = jsonencode([{
@@ -307,9 +308,12 @@ resource "aws_ecs_task_definition" "gateway" {
     essential              = true
     user                   = "10001"
     readonlyRootFilesystem = true
-    portMappings           = [{ containerPort = var.container_port, protocol = "tcp" }]
-    mountPoints            = [{ sourceVolume = "tmp", containerPath = "/tmp", readOnly = false }]
-    linuxParameters        = { capabilities = { drop = ["ALL"] }, initProcessEnabled = true }
+    # Defaults ECS fills in on save are written out explicitly, so plans stay clean.
+    portMappings    = [{ containerPort = var.container_port, hostPort = var.container_port, protocol = "tcp" }]
+    mountPoints     = [{ sourceVolume = "tmp", containerPath = "/tmp", readOnly = false }]
+    volumesFrom     = []
+    systemControls  = []
+    linuxParameters = { capabilities = { add = [], drop = ["ALL"] }, initProcessEnabled = true }
 
     environment = [
       { name = "ENVIRONMENT", value = var.environment },

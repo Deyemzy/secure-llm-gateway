@@ -62,3 +62,11 @@ output "task_security_group_id" {
 output "task_definition_family" {
   value = local.name
 }
+
+output "decoy_guardrail_arn" {
+  value = module.bedrock_access.decoy_guardrail_arn
+}
+
+output "decoy_guardrail_version" {
+  value = module.bedrock_access.decoy_guardrail_version
+}

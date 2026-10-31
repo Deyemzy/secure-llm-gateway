@@ -119,16 +119,26 @@ Dev tokens are disabled by default. The gateway refuses to start if `DEV_TOKENS_
 
 ## Deploy
 
+Run `make` from the repo root with `export AWS_PROFILE=<your-profile> AWS_PAGER=""`.
+
+**Once per account:** create the Terraform state bucket and the account budget alert. These live in `terraform/bootstrap`, outside the gateway stack, so `make destroy` never removes them.
+
 ```bash
-# run make from the repo root; plan/apply/destroy pass image_tag from TAG (default in the Makefile)
-export AWS_PROFILE=<your-profile> AWS_PAGER=""
-cd terraform/envs/dev && terraform init
-terraform apply -target=module.gateway.aws_ecr_repository.gateway
-cd ../../.. && make push TAG=v0.3.0 && make apply
-scripts/cognito.sh add-user alice platform
-GATEWAY_URL=$(terraform -chdir=terraform/envs/dev output -raw api_base_url | sed 's#/v1$##') \
-GATEWAY_TOKEN=$(scripts/cognito.sh token alice) make test-live
-make verify-iam verify-guardrail     # IAM simulation + real no-guardrail calls from inside the VPC
+cp terraform/bootstrap/terraform.tfvars.example terraform/bootstrap/terraform.tfvars   # set budget_alert_email
+# first run only: comment out `backend "s3" {}` in terraform/bootstrap/versions.tf
+terraform -chdir=terraform/bootstrap init && terraform -chdir=terraform/bootstrap apply
+# restore the backend block, then move the bootstrap state into the bucket it created
+make bootstrap-init MIGRATE=1
+```
+
+**The gateway stack:** its state is in S3 (versioned, KMS-encrypted, S3-native locking).
+
+```bash
+make init                                                    # MIGRATE=1 once, to move existing local state
+terraform -chdir=terraform/envs/dev apply -target=module.gateway.aws_ecr_repository.gateway -var image_tag=v0.3.1
+make push && make apply                                      # TAG defaults to the Makefile value
+make test-live-aws                                           # creates/uses a test user, runs the 23 abuse tests
+make verify-iam verify-guardrail                             # IAM simulation + real calls from inside the VPC
 ```
 
 Approximate dev cost in us-east-1:

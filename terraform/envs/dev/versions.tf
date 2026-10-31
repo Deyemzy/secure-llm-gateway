@@ -16,8 +16,9 @@ terraform {
     }
   }
 
-  # Local state for the dev sandbox. For shared environments use an S3 backend
-  # with use_lockfile = true and a KMS-encrypted bucket.
+  # Remote state in the bootstrap bucket (terraform/bootstrap): versioned, KMS-encrypted, S3-native
+  # locking. Partial config: `make init` supplies bucket/key/kms_key_id so no account id is committed.
+  backend "s3" {}
 }
 
 provider "aws" {

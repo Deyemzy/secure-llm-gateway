@@ -302,12 +302,20 @@ resource "aws_api_gateway_gateway_response" "this" {
 resource "aws_api_gateway_deployment" "this" {
   rest_api_id = aws_api_gateway_rest_api.this.id
 
+  # Hash only configuration we set (not computed attributes), so plans are stable and a redeploy
+  # happens exactly when routing, auth or error responses change.
   triggers = {
-    redeploy = sha1(jsonencode([
-      aws_api_gateway_resource.chat, aws_api_gateway_resource.completions, aws_api_gateway_resource.models,
-      aws_api_gateway_method.this, aws_api_gateway_integration.this, aws_api_gateway_authorizer.cognito,
-      aws_api_gateway_gateway_response.this,
-    ]))
+    redeploy = sha1(jsonencode({
+      resources = [aws_api_gateway_resource.chat.id, aws_api_gateway_resource.completions.id,
+      aws_api_gateway_resource.models.id]
+      methods = { for k, m in aws_api_gateway_method.this : k => [m.id, m.authorization, m.authorizer_id,
+      m.authorization_scopes] }
+      integrations = { for k, i in aws_api_gateway_integration.this : k => [i.id, i.uri, i.connection_id,
+      i.integration_target, i.timeout_milliseconds, i.request_parameters] }
+      authorizer = [aws_api_gateway_authorizer.cognito.id, aws_api_gateway_authorizer.cognito.provider_arns]
+      responses = { for k, r in aws_api_gateway_gateway_response.this : k => [r.status_code, r.response_templates,
+      r.response_parameters] }
+    }))
   }
 
   lifecycle {

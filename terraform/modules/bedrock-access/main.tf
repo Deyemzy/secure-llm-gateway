@@ -66,6 +66,32 @@ resource "aws_bedrock_guardrail_version" "this" {
   }
 }
 
+# Decoy: a real guardrail that nothing uses. It exists only so scripts/verify_guardrail.sh can prove
+# at runtime that IAM refuses a Converse call carrying any guardrail other than ours
+# (a made-up ARN is rejected as invalid before IAM's verdict is visible). The task role has no
+# permission on it, and the IAM deny covers it.
+resource "aws_bedrock_guardrail" "decoy" {
+  name                      = "${var.name}-decoy"
+  description               = "Never used for traffic: target of the guardrail-enforcement probe"
+  blocked_input_messaging   = "blocked"
+  blocked_outputs_messaging = "blocked"
+
+  word_policy_config {
+    managed_word_lists_config {
+      type = "PROFANITY"
+    }
+  }
+}
+
+resource "aws_bedrock_guardrail_version" "decoy" {
+  guardrail_arn = aws_bedrock_guardrail.decoy.guardrail_arn
+  description   = "Pinned by Terraform"
+
+  lifecycle {
+    replace_triggered_by = [aws_bedrock_guardrail.decoy]
+  }
+}
+
 # ---- Task role -------------------------------------------------------------
 
 data "aws_iam_policy_document" "assume" {

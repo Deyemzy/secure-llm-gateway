@@ -125,9 +125,21 @@ def auth(token=None, **kw):
     return {"Authorization": f"Bearer {token or mint(**kw)}"}
 
 
+class Secret(str):
+    """A str whose repr never shows its value, so pytest failure reports can't print a token."""
+
+    def __repr__(self):
+        return "'<redacted>'"
+
+
+class LiveTarget(tuple):
+    def __repr__(self):
+        return f"LiveTarget(url={self[0]!r}, token='<redacted>')"
+
+
 @pytest.fixture
 def live():
     url, token = os.environ.get("GATEWAY_URL"), os.environ.get("GATEWAY_TOKEN")
     if not url or not token:
         pytest.skip("GATEWAY_URL / GATEWAY_TOKEN not set")
-    return url.rstrip("/"), token
+    return LiveTarget((url.rstrip("/"), Secret(token)))
