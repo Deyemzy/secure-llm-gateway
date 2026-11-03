@@ -3,9 +3,19 @@
 
 data "aws_region" "current" {}
 
+# The tag is resolved to its digest once, at plan time, and the task definitions run that exact
+# image. ECR tags are already immutable; pinning also means the plan shows the precise image being
+# deployed, and a different image can only come from a new plan. The image must be pushed (make push)
+# before the full apply; while the repository itself is still being created, the read waits for apply.
+data "aws_ecr_image" "gateway" {
+  repository_name = aws_ecr_repository.gateway.name
+  image_tag       = var.image_tag
+  depends_on      = [aws_ecr_repository.gateway]
+}
+
 locals {
   region = data.aws_region.current.region
-  image  = "${aws_ecr_repository.gateway.repository_url}:${var.image_tag}"
+  image  = "${aws_ecr_repository.gateway.repository_url}@${data.aws_ecr_image.gateway.image_digest}"
 
   # Exactly what reserve.lua / settle.lua and redis-py need, on slg:* keys only. No delete commands:
   # holds and counters only ever expire. Mirrored in deploy/valkey/users.acl (CI runs the budget tests

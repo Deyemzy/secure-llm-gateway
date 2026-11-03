@@ -98,7 +98,8 @@ variable "log_group_arn" {
 }
 
 variable "image_tag" {
-  type = string
+  description = "ECR tag to deploy (make push). Resolved to its digest at plan time; tasks run the digest."
+  type        = string
 }
 
 variable "container_port" {
