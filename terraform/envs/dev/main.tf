@@ -7,6 +7,17 @@ locals {
   # Must line up with the models in gateway/policy.yaml.
   profile_arns = [for p in var.inference_profile_ids : "arn:aws:bedrock:${var.region}:${local.account}:inference-profile/${p}"]
   model_arns   = [for p in var.inference_profile_ids : "arn:aws:bedrock:*::foundation-model/${join(".", slice(split(".", p), 1, length(split(".", p))))}"]
+
+  # gateway/policy.yaml plus the dev-only live-test team and users. Published as JSON (valid YAML).
+  base_policy = yamldecode(file("${path.root}/../../../gateway/policy.yaml"))
+  live_test   = yamldecode(file("${path.root}/live-test-policy.yaml"))
+  policy = merge(local.base_policy, {
+    teams = merge(local.base_policy.teams, local.live_test.teams)
+    budgets = merge(local.base_policy.budgets, {
+      teams = merge(local.base_policy.budgets.teams, local.live_test.budgets.teams)
+      users = merge(local.base_policy.budgets.users, local.live_test.budgets.users)
+    })
+  })
 }
 
 module "observability" {
@@ -48,7 +59,7 @@ module "edge" {
   vpc_id               = module.network.vpc_id
   vpc_cidr             = module.network.vpc_cidr
   private_subnet_ids   = module.network.private_subnet_ids
-  teams                = var.teams
+  teams                = distinct(concat(var.teams, keys(local.live_test.teams)))
   access_log_group_arn = module.observability.apigw_log_group_arn
   access_token_minutes = var.revocation_window_minutes
   waf_log_group_arn    = module.observability.waf_log_group_arn
@@ -82,7 +93,7 @@ module "gateway" {
   task_role_arn               = module.bedrock_access.task_role_arn
   task_role_name              = module.bedrock_access.task_role_name
   environment                 = "dev"
-  policy_yaml                 = file("${path.root}/../../../gateway/policy.yaml")
+  policy_yaml                 = jsonencode(local.policy)
   guardrail_id                = module.bedrock_access.guardrail_arn # ARN: matched by the IAM deny condition
   guardrail_version           = module.bedrock_access.guardrail_version
   kms_key_arn                 = module.observability.kms_key_arn
@@ -96,4 +107,5 @@ module "gateway" {
   image_tag                   = var.image_tag
   desired_count               = var.desired_count
   force_delete_images         = true
+  enable_ledger_drill         = true # make drill-ledger-rebuild (dev only)
 }

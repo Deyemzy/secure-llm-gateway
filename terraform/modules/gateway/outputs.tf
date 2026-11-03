@@ -21,3 +21,7 @@ output "task_security_group_id" {
 output "policy_parameter_name" {
   value = aws_ssm_parameter.policy.name
 }
+
+output "drill_task_definition_family" {
+  value = var.enable_ledger_drill ? aws_ecs_task_definition.drill[0].family : null
+}

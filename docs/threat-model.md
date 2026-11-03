@@ -28,7 +28,7 @@ Each step either passes the request on or stops it with the response shown.
 | 2 | Validate request shape | `400 unsupported_parameter` (stream, tools, tool_choice, n>1, images), `400 unknown_parameter` (anything else), `400 invalid_request` |
 | 3 | Resolve model alias (`fast`/`smart`/`open`) against team policy; sampling support; credential/PII screening | `403 model_not_allowed`/`team_not_allowed`/`max_tokens_not_allowed`, `400 unsupported_parameter`, `400 sensitive_data` |
 | 4 | Reserve worst-case cost against **monthly** team + user budgets (Lua), plus per-user rpm | `429 budget_exceeded` (not retryable), `429 rate_limited` (Retry-After), `503 dependency_unavailable` |
-| 5 | Bedrock Converse with Guardrail | `400 blocked_by_guardrail`, `429 upstream_throttled` (Retry-After, not charged), `503 upstream_unavailable`, `502 upstream_error` |
+| 5 | Bedrock Converse with Guardrail | `400 blocked_by_guardrail`, `429 upstream_throttled` (Retry-After, not charged), `503 upstream_unavailable`, `502 upstream_access_denied` (model not enabled for this account or role; not charged), `502 upstream_error` |
 | 6 | Settle actual cost, write metadata log | - |
 | 7 | Return | `200` + `X-Request-Id`, `X-Budget-Remaining-USD` |
 
@@ -158,6 +158,6 @@ Issues found by running the test suites against the deployed stack (2026-10-31),
 
 - `make test`: unit, pipeline, config, OpenAI-SDK and in-memory ledger tests. No AWS or Redis needed.
 - `make test-redis` / `make evidence`: everything, including the ledger scenarios on real Valkey (primary + replica) as the least-privilege user, the failover injection, and the ACL denials. CI runs it with `REQUIRE_REDIS=1` and uploads `docs/evidence/test-evidence.md`.
-- `make verify-iam` and `make verify-guardrail` (post-deploy) write `docs/evidence/iam-simulation.md` and `guardrail-probe.md`. Last local run on 2026-10-31 (Valkey 8.1.11): 213 passed, 0 skipped; 10 concurrent $0.04 holds against $0.10 gave exactly 2 winners; `FLUSHALL`, `KEYS`, `CONFIG` and writes outside `slg:*` were denied for the gateway user.
+- `make verify-iam` and `make verify-guardrail` (post-deploy) write `docs/evidence/iam-simulation.md` and `guardrail-probe.md`. Last local run on 2026-10-31 (Valkey 8.1.11): 213 passed, 0 skipped; 10 concurrent $0.04 holds against $0.10 gave exactly 2 winners; `FLUSHALL`, `KEYS`, `CONFIG` and writes outside `slg:*` were denied for the gateway user. The gateway user has no delete commands (`DEL`, `UNLINK`, `GETDEL`, `HDEL` are tested as denied); only the dev-only drill user `slg-drill` can `DEL`, and only on `slg:budget:*`.
 - `make test-live`: about 23 black-box cases against the local app or `api_base_url`.
 - After a deploy, check by hand: R6, R7, no internet egress from inside a task, and a WAF block showing up in the logs.

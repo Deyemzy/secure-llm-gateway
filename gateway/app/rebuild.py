@@ -86,18 +86,22 @@ def rebuild(budget: BudgetStore, rows: list[tuple[str, str, int]], now: float, a
     return {**summary, "details": raised}
 
 
-def main() -> int:
+def connect(env=os.environ):
+    """(redis client, CloudWatch Logs client) from the gateway task's environment."""
     import boto3
     import redis
-
-    from .budget import RedisBudget
-    env = os.environ
     client = redis.Redis(host=env["REDIS_HOST"], port=int(env.get("REDIS_PORT", "6379")),
                          username=env.get("REDIS_USER") or None, password=env.get("REDIS_PASSWORD") or None,
                          ssl=env.get("REDIS_TLS", "true").lower() == "true", socket_timeout=5)
+    return client, boto3.client("logs", region_name=env.get("AWS_REGION", "us-east-1"))
+
+
+def main() -> int:
+    from .budget import RedisBudget
+    env = os.environ
+    client, logs = connect(env)
     now = time.time()
-    rows = logged_spend(boto3.client("logs", region_name=env.get("AWS_REGION", "us-east-1")),
-                        env["GATEWAY_LOG_GROUP"], now)
+    rows = logged_spend(logs, env["GATEWAY_LOG_GROUP"], now)
     result = rebuild(RedisBudget(client), rows, now, AuditLog())
     print(json.dumps({k: v for k, v in result.items() if k != "details"}))
     return 0

@@ -1,3 +1,4 @@
 user default off
-user slg-gateway on >local-dev-only ~slg:* resetchannels -@all +get +set +del +incr +incrby +expire +hget +hmget +hset +zadd +zrem +zrangebyscore +eval +evalsha +script|load +script|exists +wait +ping +info +client|setinfo
+user slg-gateway on >local-dev-only ~slg:* resetchannels -@all +get +set +incr +incrby +expire +hget +hmget +hset +zadd +zrem +zrangebyscore +eval +evalsha +script|load +script|exists +wait +ping +info +client|setinfo
+user slg-drill on >drill-local-only ~slg:budget:* resetchannels -@all +get +set +del +expire +evalsha +script|load +script|exists +ping +client|setinfo
 user slg-test on >test-only ~* &* +@all

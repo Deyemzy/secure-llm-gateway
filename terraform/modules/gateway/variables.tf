@@ -159,3 +159,9 @@ variable "policy_max_stale_minutes" {
   description = "How long the gateway keeps enforcing its last valid policy when refreshes fail, before rejecting all requests."
   type        = number
 }
+
+variable "enable_ledger_drill" {
+  description = "Create the dev-only ledger drill: a Valkey user that can DEL budget counters, its secret, roles and task definition. Refused unless environment is dev or local."
+  type        = bool
+  default     = false
+}

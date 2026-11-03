@@ -4,6 +4,7 @@
 #   default      disabled, as in AWS
 #   slg-gateway  MUST match redis_acl in terraform/modules/gateway/main.tf; the budget tests run as
 #                this user in CI and tests/unit/test_budget.py::test_acl_matches_terraform checks they match
+#   slg-drill    MUST match redis_drill_acl in the same file; the ledger drill's user (dev only)
 #   slg-test     test-only admin for fixtures (cleanup, TTL assertions); never exists in AWS
 services:
   valkey:

@@ -7,14 +7,23 @@ locals {
   region = data.aws_region.current.region
   image  = "${aws_ecr_repository.gateway.repository_url}:${var.image_tag}"
 
-  # Exactly what reserve.lua / settle.lua and redis-py need, on slg:* keys only.
-  # Mirrored in deploy/valkey/users.acl (CI runs the budget tests as this user; a test checks they match).
+  # Exactly what reserve.lua / settle.lua and redis-py need, on slg:* keys only. No delete commands:
+  # holds and counters only ever expire. Mirrored in deploy/valkey/users.acl (CI runs the budget tests
+  # as this user; a test checks they match).
   redis_acl = join(" ", [
     "on ~slg:* resetchannels -@all",
-    "+get +set +del +incr +incrby +expire",
+    "+get +set +incr +incrby +expire",
     "+hget +hmget +hset +zadd +zrem +zrangebyscore",
     "+eval +evalsha +script|load +script|exists +wait",
     "+ping +info +client|setinfo",
+  ])
+
+  # Ledger drill only (dev): read, delete and rebuild budget counters, nothing else, no other keys.
+  # Mirrored in deploy/valkey/users.acl as slg-drill.
+  redis_drill_acl = join(" ", [
+    "on ~slg:budget:* resetchannels -@all",
+    "+get +set +del +expire +evalsha +script|load +script|exists",
+    "+ping +client|setinfo",
   ])
 }
 
@@ -99,7 +108,8 @@ resource "aws_elasticache_user" "app" {
 resource "aws_elasticache_user_group" "this" {
   user_group_id = var.name
   engine        = "valkey"
-  user_ids      = [aws_elasticache_user.default.user_id, aws_elasticache_user.app.user_id]
+  user_ids = concat([aws_elasticache_user.default.user_id, aws_elasticache_user.app.user_id],
+  aws_elasticache_user.drill[*].user_id)
 }
 
 resource "aws_elasticache_subnet_group" "budget" {
@@ -455,4 +465,158 @@ resource "aws_scheduler_schedule" "ledger_rebuild" {
       maximum_retry_attempts = 2
     }
   }
+}
+
+# ---- Ledger rebuild drill (dev only) ---------------------------------------
+# `make drill-ledger-rebuild` runs app.drill as this task: it deletes the live-test team's budget
+# counters and requires the rebuild to restore them. Deleting needs DEL, which the gateway's own
+# Valkey user deliberately lacks, so the drill has its own user, secret, roles and task definition,
+# and none of it exists unless enable_ledger_drill is set (refused outside dev).
+
+resource "random_password" "redis_drill" {
+  count   = var.enable_ledger_drill ? 1 : 0
+  length  = 40
+  special = false
+}
+
+resource "aws_elasticache_user" "drill" {
+  count         = var.enable_ledger_drill ? 1 : 0
+  user_id       = "${var.name}-drill"
+  user_name     = "slg-drill"
+  engine        = "valkey"
+  access_string = local.redis_drill_acl
+  authentication_mode {
+    type      = "password"
+    passwords = [random_password.redis_drill[0].result]
+  }
+  lifecycle {
+    precondition {
+      condition     = contains(["dev", "local"], var.environment)
+      error_message = "enable_ledger_drill is for dev only: the drill deletes budget counters."
+    }
+  }
+}
+
+resource "aws_secretsmanager_secret" "redis_drill" {
+  count                   = var.enable_ledger_drill ? 1 : 0
+  name_prefix             = "${var.name}/redis-drill-password-"
+  kms_key_id              = var.kms_key_arn
+  recovery_window_in_days = 7
+}
+
+resource "aws_secretsmanager_secret_version" "redis_drill" {
+  count         = var.enable_ledger_drill ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.redis_drill[0].id
+  secret_string = random_password.redis_drill[0].result
+}
+
+# Task role: query the audit logs. No Bedrock, no SSM.
+resource "aws_iam_role" "drill_task" {
+  count              = var.enable_ledger_drill ? 1 : 0
+  name               = "${var.name}-drill-task"
+  assume_role_policy = data.aws_iam_policy_document.exec_assume.json
+}
+
+data "aws_iam_policy_document" "drill_task" {
+  statement {
+    actions   = ["logs:StartQuery"]
+    resources = ["${var.log_group_arn}:*", var.log_group_arn]
+  }
+  statement {
+    actions   = ["logs:GetQueryResults", "logs:StopQuery"]
+    resources = ["*"] # query-id scoped APIs; no resource-level permissions
+  }
+}
+
+resource "aws_iam_role_policy" "drill_task" {
+  count  = var.enable_ledger_drill ? 1 : 0
+  role   = aws_iam_role.drill_task[0].id
+  policy = data.aws_iam_policy_document.drill_task.json
+}
+
+# Execution role: pull the image, write logs, inject only the drill user's password.
+resource "aws_iam_role" "drill_execution" {
+  count              = var.enable_ledger_drill ? 1 : 0
+  name               = "${var.name}-drill-execution"
+  assume_role_policy = data.aws_iam_policy_document.exec_assume.json
+}
+
+data "aws_iam_policy_document" "drill_execution" {
+  count = var.enable_ledger_drill ? 1 : 0
+  statement {
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+  statement {
+    actions   = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"]
+    resources = [aws_ecr_repository.gateway.arn]
+  }
+  statement {
+    actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+    resources = ["${var.log_group_arn}:*"]
+  }
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [aws_secretsmanager_secret.redis_drill[0].arn]
+  }
+  statement {
+    actions   = ["kms:Decrypt"]
+    resources = [var.kms_key_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "drill_execution" {
+  count  = var.enable_ledger_drill ? 1 : 0
+  role   = aws_iam_role.drill_execution[0].id
+  policy = data.aws_iam_policy_document.drill_execution[0].json
+}
+
+resource "aws_ecs_task_definition" "drill" {
+  count                    = var.enable_ledger_drill ? 1 : 0
+  family                   = "${var.name}-drill"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = 256
+  memory                   = 512
+  execution_role_arn       = aws_iam_role.drill_execution[0].arn
+  task_role_arn            = aws_iam_role.drill_task[0].arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = var.cpu_architecture
+  }
+
+  container_definitions = jsonencode([{
+    name                   = "drill"
+    image                  = local.image
+    essential              = true
+    user                   = "10001"
+    readonlyRootFilesystem = true
+    command                = ["python", "-m", "app.drill", "--team", "live-test"]
+    portMappings           = []
+    mountPoints            = []
+    volumesFrom            = []
+    systemControls         = []
+    linuxParameters        = { capabilities = { add = [], drop = ["ALL"] }, initProcessEnabled = true }
+    environment = [
+      { name = "ENVIRONMENT", value = var.environment },
+      { name = "AWS_REGION", value = local.region },
+      { name = "GATEWAY_LOG_GROUP", value = var.log_group_name },
+      { name = "REDIS_HOST", value = aws_elasticache_replication_group.budget.primary_endpoint_address },
+      { name = "REDIS_PORT", value = "6379" },
+      { name = "REDIS_USER", value = aws_elasticache_user.drill[0].user_name },
+      { name = "REDIS_TLS", value = "true" },
+    ]
+    secrets = [
+      { name = "REDIS_PASSWORD", valueFrom = aws_secretsmanager_secret.redis_drill[0].arn },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = var.log_group_name
+        awslogs-region        = local.region
+        awslogs-stream-prefix = "drill"
+      }
+    }
+  }])
 }

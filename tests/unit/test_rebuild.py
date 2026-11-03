@@ -1,6 +1,7 @@
 """Ledger rebuild from audit logs: restores lost spend, never lowers the ledger."""
 
 import json
+import time
 
 import pytest
 
@@ -39,7 +40,7 @@ def test_disaster_drill_valkey_loses_everything(stack):
 
     stack.budget.data.clear()                                 # node replaced without a replica
     rows = insights(stack.logs())
-    result = rebuild(stack.budget, rows, NOW, Audit())
+    result = rebuild(stack.budget, rows, time.time(), Audit())   # same month as the traffic
 
     after = {k: v for k, v in stack.budget.data.items() if k.startswith("slg:budget:")}
     assert after == before                                    # every team and user counter restored

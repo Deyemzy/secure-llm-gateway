@@ -4,7 +4,8 @@
   2. validate request shape                 400 invalid_request / unsupported_parameter / unknown_parameter
   3. resolve model alias against policy     403 model_not_allowed / team_not_allowed
   4. reserve budget (Redis Lua)             429 budget_exceeded / rate_limited, 409 duplicate_request
-  5. Converse + Guardrail                   400 blocked_by_guardrail, 429 upstream_throttled
+  5. Converse + Guardrail                   400 blocked_by_guardrail, 429 upstream_throttled,
+                                            502 upstream_access_denied (not charged)
   6. settle actual cost, log metadata
   7. return                                 200 (+ X-Budget-Remaining-USD, X-Request-Id)
 
@@ -28,8 +29,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .auth import AuthError, JWKSCache, JWTVerifier, Principal
-from .bedrock import (Bedrock, UpstreamOutcomeUnknown, UpstreamRejected, UpstreamThrottled, UpstreamUnavailable,
-                      make_client)
+from .bedrock import (Bedrock, UpstreamAccessDenied, UpstreamOutcomeUnknown, UpstreamRejected, UpstreamThrottled,
+                      UpstreamUnavailable, make_client)
 from .budget import IDEMPOTENCY_KEY, BudgetStore, BudgetUnavailable, InMemoryBudget, RedisBudget, request_id_for
 from .config import Settings, StartupError
 from .logging import AuditLog
@@ -184,7 +185,7 @@ def create_app(deps: Deps) -> FastAPI:
         started = time.monotonic()
         rid = request.state.rid
         log: dict = {"request_id": rid, "method": "POST", "path": "/v1/chat/completions",
-                     "source_ip": client_ip(request)}
+                     "source_ip": client_ip(request), "upstream_called": False}
         reservation = None
         limits: Limits | None = None
         budget_hdr: dict = {}
@@ -265,6 +266,7 @@ def create_app(deps: Deps) -> FastAPI:
                                    retry_after=5)
 
             # 5. model
+            log["upstream_called"] = True
             t0 = time.monotonic()
             try:
                 result = await run_in_threadpool(deps.bedrock.converse, route.model_id, system, turns,
@@ -276,6 +278,10 @@ def create_app(deps: Deps) -> FastAPI:
             except UpstreamUnavailable:
                 raise GatewayError(503, "upstream_unavailable", "model temporarily unavailable",
                                    retry_after=5) from None
+            except UpstreamAccessDenied as e:
+                log["detail"] = e.code
+                raise GatewayError(502, "upstream_access_denied", "this model is not enabled for the gateway; "
+                                   "contact the platform team") from None
             except UpstreamRejected as e:
                 log["detail"] = e.code
                 raise GatewayError(502, "upstream_error", "model call failed") from None
@@ -336,7 +342,9 @@ def create_app(deps: Deps) -> FastAPI:
 
 async def _settle(deps: Deps, reservation, actual: int, log: dict, state: str):
     try:
-        return await run_in_threadpool(deps.budget.settle, reservation, actual, state)
+        settled = await run_in_threadpool(deps.budget.settle, reservation, actual, state)
+        log["ledger_outcome"] = state
+        return settled
     except BudgetUnavailable:
         # The hold stays open; the reconciler closes it later. Over-counts, never under-counts.
         log["detail"] = "settle_failed"

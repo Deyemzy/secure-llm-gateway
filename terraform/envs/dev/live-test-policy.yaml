@@ -1,0 +1,15 @@
+# Dev-only additions to gateway/policy.yaml for the live tests (scripts/live_test.sh). main.tf merges
+# them in before publishing the policy to SSM, so the live-test team and users never exist in the
+# production policy. Keys must not overlap gateway/policy.yaml (tests/unit/test_dev_policy.py).
+teams:
+  live-test:
+    models: [fast]
+    user_requests_per_minute: 10
+budgets:
+  teams:
+    live-test:
+      team_monthly_usd: 1.00
+      user_monthly_usd: 0.50
+  users:
+    slg-live-a:
+      monthly_usd: 0.00    # every request must be refused at reserve, before Bedrock is called

@@ -84,6 +84,38 @@ def test_key_format_is_monthly_utc():
     assert 31 * 86400 < BUDGET_TTL_S <= 40 * 86400
 
 
+LAST_SECOND_OF_OCT = datetime(2026, 10, 31, 23, 59, 59, tzinfo=timezone.utc).timestamp()
+
+
+def test_budget_resets_at_utc_month_boundary(store):
+    """Frozen clock: exhausted at Oct 31 23:59:59, a fresh budget at Nov 1 00:00:00, October kept."""
+    b, clock = store
+    clock.t = LAST_SECOND_OF_OCT
+    first = reserve(b, "oct-1", amount=USER_LIMIT)
+    assert first.ok and b.begin(first.reservation)
+    b.settle(first.reservation, USER_LIMIT, "settled")                # October user budget used up
+    assert reserve(b, "oct-2", amount=1).reason == "user_budget_exceeded"
+
+    clock.t = LAST_SECOND_OF_OCT + 1                                  # 2026-11-01T00:00:00Z
+    nov = reserve(b, "nov-1", amount=1)
+    assert nov.ok and nov.user_spent == 1 and nov.team_spent == 1
+    assert nov.reservation.user_key.endswith(":2026-11") and nov.reservation.team_key.endswith(":2026-11")
+    assert counter(b, first.reservation.user_key) == USER_LIMIT       # October's spend is not wiped
+
+
+def test_hold_reserved_in_october_settles_against_october(store):
+    """A call that straddles midnight is charged to the month that reserved it, not the new one."""
+    b, clock = store
+    clock.t = LAST_SECOND_OF_OCT
+    r = reserve(b, "straddle", amount=40_000).reservation
+    assert b.begin(r)
+    clock.t = LAST_SECOND_OF_OCT + 2                                  # Bedrock answered after midnight
+    b.settle(r, 1_000, "settled")
+    assert counter(b, r.user_key) == 1_000 and r.user_key.endswith(":2026-10")
+    nov_user_key = r.user_key.replace(":2026-10", ":2026-11")
+    assert counter(b, nov_user_key) == 0
+
+
 @pytest.mark.parametrize("raw", ["a:b", "x y", "{tag}", "a" * 200, "", "ü"])
 def test_unsafe_ids_are_hashed(raw):
     out = safe_id(raw)
@@ -444,15 +476,89 @@ def test_valkey_gateway_user_is_least_privilege(admin, cmd):
         redis.Redis.from_url(app_url).execute_command(*cmd)
 
 
-def test_acl_matches_terraform():
-    """The compose ACL (exercised in CI) and the Terraform ACL (deployed) grant the same commands."""
+DELETE_COMMANDS = [("DEL", "slg:budget:team:t:2026-10"), ("UNLINK", "slg:budget:team:t:2026-10"),
+                   ("GETDEL", "slg:budget:team:t:2026-10"), ("HDEL", "slg:resv:r1", "state")]
+
+
+@pytest.mark.parametrize("cmd", DELETE_COMMANDS)
+def test_valkey_gateway_user_cannot_delete(admin, cmd):
+    """Holds and counters only ever expire; the gateway itself can't delete ledger state."""
+    import redis
+    _, app_url = redis_urls()
+    if app_url == os.environ.get("REDIS_TEST_URL"):
+        pytest.skip("REDIS_TEST_APP_URL not set to the slg-gateway user")
+    admin.set("slg:budget:team:t:2026-10", 123)
+    admin.hset("slg:resv:r1", "state", "invoking")
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        redis.Redis.from_url(app_url).execute_command(*cmd)
+    assert admin.get("slg:budget:team:t:2026-10") == b"123" and admin.hget("slg:resv:r1", "state") == b"invoking"
+
+
+def drill_url():
+    url = os.environ.get("REDIS_TEST_DRILL_URL")
+    if not url:
+        redis_urls()  # skips / fails exactly like the other Valkey tests
+        pytest.skip("REDIS_TEST_DRILL_URL not set to the slg-drill user")
+    return url
+
+
+@pytest.mark.parametrize("cmd", [("DEL", "slg:resv:r1"), ("HSET", "slg:resv:r1", "state", "x"),
+                                 ("INCRBY", "slg:budget:team:t:2026-10", "5"), ("GET", "slg:rpm:user:u:1"),
+                                 ("FLUSHALL",), ("KEYS", "*"), ("SCAN", "0"), ("EVAL", "return 1", "0"),
+                                 ("CONFIG", "GET", "*"), ("ACL", "LIST"), ("WAIT", "1", "10")])
+def test_valkey_drill_user_is_confined_to_budget_counters(admin, cmd):
+    import redis
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        redis.Redis.from_url(drill_url()).execute_command(*cmd)
+
+
+def test_valkey_drill_runs_as_drill_user(admin):
+    """app.drill end to end on real Valkey: wipe a team's counters, rebuild, exact restore."""
+    import io
+    import time
+
+    import redis
+
+    from app.drill import drill
+    from app.logging import AuditLog
+    from app.rebuild import month_start
+    c = redis.Redis.from_url(drill_url())
+    now = time.time()
+    month, _ = month_start(now)
+    rows = [("t", "sub-x", 1_234), ("t", "sub-y", 66), ("other", "sub-z", 500)]
+    for key, v in ((f"slg:budget:team:t:{month}", 1_300), (f"slg:budget:user:sub-x:{month}", 1_234),
+                   (f"slg:budget:user:sub-y:{month}", 66), (f"slg:budget:team:other:{month}", 500)):
+        admin.set(key, v)
+    result = drill(RedisBudget(c), lambda k: int(c.get(k) or 0), lambda ks: c.delete(*ks), rows, "t", now,
+                   AuditLog(io.StringIO()))
+    assert result["passed"] and len(result["counters"]) == 3
+    assert all(x["wiped_usd"] == 0 and x["after_usd"] == x["before_usd"] > 0 for x in result["counters"])
+    assert admin.get(f"slg:budget:team:other:{month}") == b"500"
+
+
+def _acl_commands(text: str) -> set[str]:
     import re
+    return set(re.findall(r"\+[\w|]+", text))
+
+
+@pytest.mark.parametrize("local,user,keys", [("redis_acl", "slg-gateway", "~slg:*"),
+                                             ("redis_drill_acl", "slg-drill", "~slg:budget:*")])
+def test_acl_matches_terraform(local, user, keys):
+    """The compose ACLs (exercised in CI) and the Terraform ACLs (deployed) grant the same commands."""
     from pathlib import Path
     root = Path(__file__).resolve().parents[2]
     tf = (root / "terraform/modules/gateway/main.tf").read_text()
-    block = tf[tf.index("redis_acl = join"):]
+    block = tf[tf.index(f"{local} = join"):]
     block = block[:block.index("])")]
     acl = (root / "deploy/valkey/users.acl").read_text()
-    line = next(l for l in acl.splitlines() if l.startswith("user slg-gateway "))
-    assert set(re.findall(r"\+[\w|]+", block)) == set(re.findall(r"\+[\w|]+", line))
-    assert "~slg:*" in block and "~slg:*" in line
+    line = next(l for l in acl.splitlines() if l.startswith(f"user {user} "))
+    assert _acl_commands(block) == _acl_commands(line)
+    assert f'"on {keys} ' in block and f" {keys} " in line
+
+
+def test_gateway_acl_grants_no_delete_command():
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[2]
+    line = next(l for l in (root / "deploy/valkey/users.acl").read_text().splitlines()
+                if l.startswith("user slg-gateway "))
+    assert not _acl_commands(line) & {"+del", "+unlink", "+getdel", "+hdel", "+flushdb", "+flushall", "+@all"}

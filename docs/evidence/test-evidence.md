@@ -1,8 +1,8 @@
 # Test evidence
 
-Generated 2026-10-31 20:00 UTC by `scripts/evidence.py` (Python 3.14.2, budget store: valkey 8.1.11).
+Generated 2026-11-03 11:17 UTC by `scripts/evidence.py` (Python 3.14.2, budget store: valkey 8.1.11).
 
-**302 passed, 0 failed, 0 skipped.** Ledger tests run against both the in-memory store and the real Lua scripts on Valkey, as the least-privilege `slg-gateway` user.
+**338 passed, 0 failed, 0 skipped.** Ledger tests run against both the in-memory store and the real Lua scripts on Valkey, as the least-privilege `slg-gateway` user.
 
 | Behaviour demonstrated | Tests | Result |
 |---|---|---|
@@ -28,6 +28,6 @@ Generated 2026-10-31 20:00 UTC by `scripts/evidence.py` (Python 3.14.2, budget s
 | No hidden SDK retries that could bill twice against one hold | `test_bedrock_client_never_retries_silently` (1 cases) | ✅ |
 | Valkey loses all data -> hourly rebuild restores spend from audit logs; never lowers the ledger | `test_disaster_drill_valkey_loses_everything`, `test_raise_floor_only_raises`, `test_rebuild_never_lowers_the_ledger`, `test_rebuild_restores_enforcement` (5 cases) | ✅ |
 | Rejected policy refresh keeps controls and alarms immediately | `test_rejected_refresh_raises_alarm_immediately` (1 cases) | ✅ |
-| Production Valkey ACL == CI ACL | `test_acl_matches_terraform` (1 cases) | ✅ |
+| Production Valkey ACL == CI ACL | `test_acl_matches_terraform` (2 cases) | ✅ |
 | Gateway's Valkey user cannot FLUSHALL, KEYS, CONFIG, SCAN, REPLICAOF, ACL or touch non-slg keys | `test_valkey_gateway_user_is_least_privilege` (10 cases) | ✅ |
 | Guardrail probe logic detects a missing IAM guardrail deny | `test_probe_fails_when_guardrail_not_enforced` (1 cases) | ✅ |

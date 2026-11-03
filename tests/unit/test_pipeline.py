@@ -212,7 +212,7 @@ def test_throttle_429_retry_after_and_not_charged(stack):
 @pytest.mark.parametrize("code,status,ecode", [
     ("ServiceUnavailableException", 503, "upstream_unavailable"),
     ("ModelNotReadyException", 503, "upstream_unavailable"),
-    ("AccessDeniedException", 502, "upstream_error"),
+    ("AccessDeniedException", 502, "upstream_access_denied"),
     ("ValidationException", 502, "upstream_error"),
 ])
 def test_confirmed_unbilled_failures_release_hold(stack, code, status, ecode):

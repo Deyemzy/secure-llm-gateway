@@ -20,7 +20,7 @@ settled spend + outstanding holds  ==  ledger counter  <=  authorized budget
 
 The Bedrock client makes **no automatic retries** (`total_max_attempts = 1`). A hidden retry after a lost-but-billed response would bill twice against one hold. Clients retry explicitly, and each retry is reserved on its own.
 
-Evidence: run `make evidence` to regenerate [`evidence/test-evidence.md`](evidence/test-evidence.md). After a deploy, [`evidence/iam-simulation.md`](evidence/iam-simulation.md) and [`evidence/guardrail-probe.md`](evidence/guardrail-probe.md) are produced by `make verify-iam` and `make verify-guardrail`.
+Evidence: run `make evidence` to regenerate [`evidence/test-evidence.md`](evidence/test-evidence.md). After a deploy, [`evidence/iam-simulation.md`](evidence/iam-simulation.md) and [`evidence/guardrail-probe.md`](evidence/guardrail-probe.md) are produced by `make verify-iam` and `make verify-guardrail`, and [`evidence/ledger-rebuild-drill.md`](evidence/ledger-rebuild-drill.md) by `make drill-ledger-rebuild`.
 
 ## Hold lifecycle
 
@@ -59,7 +59,7 @@ reserve ─▶ reserved ──begin──▶ invoking ──settle(actual)──
 | F14 | Policy refresh missing or invalid while running | Keeps enforcing the last **validated** policy, so a broken update never removes controls. The `policy-refresh-rejected` alarm fires **immediately**. After `POLICY_MAX_STALE_S` (900 s, the 15-minute revocation window) with no valid refresh, every request gets `503 policy_unavailable` (`policy-stale` alarm), so a stale policy can't stay in force indefinitely | - | `test_rejected_refresh_raises_alarm_immediately`, `test_bad_policy_refresh_then_stale_policy_rejects_every_request` |
 | F15 | Dev-token mode enabled outside `ENVIRONMENT=local` | The process refuses to start | - | `test_dev_tokens_refused_outside_local` |
 | F16 | Bedrock call made without our guardrail, by any code holding the task role | IAM explicit deny | - | `scripts/verify_iam.py` (policy logic), `scripts/verify_guardrail.sh` (real calls; post-deploy) |
-| F17 | **Valkey loses its data** (node replaced, bad restore, flush) | Prevented first: 1 replica, Multi-AZ, automatic failover by default, and Terraform refuses 0 replicas unless explicitly allowed. Recovered second: an hourly job sums the month's spend from the audit logs and **raises** any lower counter, never lowering one; the `ledger-lost-spend` alarm fires | restored to ≥ logged spend | `test_disaster_drill_valkey_loses_everything`, `test_rebuild_restores_enforcement`, `test_rebuild_never_lowers_the_ledger`, `test_raise_floor_only_raises` (both stores) |
+| F17 | **Valkey loses its data** (node replaced, bad restore, flush) | Prevented first: 1 replica, Multi-AZ, automatic failover by default, and Terraform refuses 0 replicas unless explicitly allowed. Recovered second: an hourly job sums the month's spend from the audit logs and **raises** any lower counter, never lowering one; the `ledger-lost-spend` alarm fires | restored to ≥ logged spend | `test_disaster_drill_valkey_loses_everything`, `test_rebuild_restores_enforcement`, `test_rebuild_never_lowers_the_ledger`, `test_raise_floor_only_raises` (both stores); on AWS, `make drill-ledger-rebuild` wipes the dev-only live-test team's counters and requires the rebuild to restore them exactly ([`evidence/ledger-rebuild-drill.md`](evidence/ledger-rebuild-drill.md)) |
 
 ## Known limits
 

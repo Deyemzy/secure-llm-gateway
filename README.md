@@ -135,10 +135,11 @@ make bootstrap-init MIGRATE=1
 
 ```bash
 make init                                                    # MIGRATE=1 once, to move existing local state
-terraform -chdir=terraform/envs/dev apply -target=module.gateway.aws_ecr_repository.gateway -var image_tag=v0.3.1
+terraform -chdir=terraform/envs/dev apply -target=module.gateway.aws_ecr_repository.gateway -var image_tag=v0.4.0
 make push && make apply                                      # TAG defaults to the Makefile value
-make test-live-aws                                           # creates/uses a test user, runs the 23 abuse tests
+make test-live-aws                                           # creates/uses 4 test users, runs the 27 live tests
 make verify-iam verify-guardrail                             # IAM simulation + real calls from inside the VPC
+make drill-ledger-rebuild                                    # after test-live-aws: wipe + rebuild the live-test team's ledger
 ```
 
 Approximate dev cost in us-east-1:

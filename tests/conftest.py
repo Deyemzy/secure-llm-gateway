@@ -99,12 +99,11 @@ class FakeConverse:
                 "usage": {"inputTokens": self.usage[0], "outputTokens": self.usage[1]}}
 
 
-@pytest.fixture
-def stack(verifier):
+def make_stack(verifier, policy_path=None):
     fake = FakeConverse()
     budget = InMemoryBudget()
     logs = io.StringIO()
-    store = PolicyStore(file_source(str(POLICY_PATH)))
+    store = PolicyStore(file_source(str(policy_path or POLICY_PATH)))
     deps = Deps(verifier, store, budget, Bedrock(fake, "gr-123", "1"), AuditLog(logs))
     client = TestClient(create_app(deps), raise_server_exceptions=False)
 
@@ -115,6 +114,11 @@ def stack(verifier):
     s.client, s.fake, s.budget, s.deps, s.store = client, fake, budget, deps, store
     s.logs = lambda: [json.loads(line) for line in logs.getvalue().splitlines()]
     return s
+
+
+@pytest.fixture
+def stack(verifier):
+    return make_stack(verifier)
 
 
 def chat_body(text="Reply with: pong", model="fast", **extra):
@@ -143,3 +147,14 @@ def live():
     if not url or not token:
         pytest.skip("GATEWAY_URL / GATEWAY_TOKEN not set")
     return LiveTarget((url.rstrip("/"), Secret(token)))
+
+
+@pytest.fixture
+def live_as(live):
+    """live_as("A") -> the same gateway, as the user whose token is in GATEWAY_TOKEN_A."""
+    def target(who: str) -> LiveTarget:
+        token = os.environ.get(f"GATEWAY_TOKEN_{who}")
+        if not token:
+            pytest.skip(f"GATEWAY_TOKEN_{who} not set (scripts/live_test.sh sets it)")
+        return LiveTarget((live[0], Secret(token)))
+    return target

@@ -70,3 +70,7 @@ output "decoy_guardrail_arn" {
 output "decoy_guardrail_version" {
   value = module.bedrock_access.decoy_guardrail_version
 }
+
+output "drill_task_definition_family" {
+  value = module.gateway.drill_task_definition_family
+}

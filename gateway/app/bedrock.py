@@ -54,6 +54,11 @@ class UpstreamRejected(Exception):
         self.code = code
 
 
+class UpstreamAccessDenied(UpstreamRejected):
+    """This deployment isn't allowed to call the model (account model access, IAM, or the endpoint
+    policy). An operator problem, not the caller's: refused before generation, so nothing billed."""
+
+
 @dataclass(frozen=True)
 class ConverseResult:
     text: str
@@ -120,6 +125,8 @@ class Bedrock:
             status = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0)
             if status >= 500:  # unrecognised server-side failure: can't rule out generation
                 raise UpstreamOutcomeUnknown(code or str(status)) from None
+            if code == "AccessDeniedException":
+                raise UpstreamAccessDenied(code) from None
             raise UpstreamRejected(code or "unknown") from None  # 4xx: refused, unbilled
         except (EndpointConnectionError, ConnectTimeoutError) as e:
             raise UpstreamUnavailable(type(e).__name__) from None   # never reached Bedrock

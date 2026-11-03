@@ -1,15 +1,16 @@
 # AWS credentials: the standard chain (export AWS_PROFILE=<your-profile> if you use named profiles).
 AWS_REGION  ?= us-east-1
-# Gateway image tag; override with: make plan TAG=v0.3.1
-TAG         ?= v0.3.1
+# Gateway image tag; override with: make plan TAG=v0.4.0
+TAG         ?= v0.4.0
 TF          := terraform -chdir=terraform/envs/dev
 PY          := .venv/bin/python
 
-.PHONY: test-live-aws init bootstrap-init hooks secrets-scan venv test test-redis test-live evidence verify-iam verify-guardrail run-local valkey-up valkey-down fmt validate plan apply destroy push redeploy logs
+.PHONY: test-live-aws drill-ledger-rebuild init bootstrap-init hooks secrets-scan venv test test-redis test-live evidence verify-iam verify-guardrail run-local valkey-up valkey-down fmt validate plan apply destroy push redeploy logs
 
 VALKEY_ENV := REDIS_TEST_URL=redis://slg-test:test-only@127.0.0.1:6379/0 \
               REDIS_TEST_APP_URL=redis://slg-gateway:local-dev-only@127.0.0.1:6379/0 \
               REDIS_TEST_REPLICA_URL=redis://slg-test:test-only@127.0.0.1:6380/0 \
+              REDIS_TEST_DRILL_URL=redis://slg-drill:drill-local-only@127.0.0.1:6379/0 \
               REQUIRE_REDIS=1
 
 hooks:                ## enable the repo's git hooks (gitleaks secret scan; no AI attribution in commit messages)
@@ -44,8 +45,11 @@ verify-iam:           ## post-deploy: IAM simulation matrix -> docs/evidence/iam
 verify-guardrail:     ## post-deploy: real Converse calls from inside the VPC -> docs/evidence/guardrail-probe.md
 	scripts/verify_guardrail.sh
 
-test-live-aws:        ## black-box abuse tests against the deployed API (sets up test user + token)
+test-live-aws:        ## black-box tests against the deployed API (test users + tokens; Bedrock calls serial, <= BEDROCK_RPM/min)
 	scripts/live_test.sh
+
+drill-ledger-rebuild: ## post-deploy: wipe the live-test team's budget counters, rebuild from logs, require exact restore
+	scripts/drill_ledger_rebuild.sh
 
 test-live:            ## black-box abuse tests: GATEWAY_URL + GATEWAY_TOKEN
 	$(PY) -m pytest -q -m live

@@ -52,6 +52,7 @@ jobs:
       REDIS_TEST_URL: redis://slg-test:test-only@127.0.0.1:6379/0
       REDIS_TEST_APP_URL: redis://slg-gateway:local-dev-only@127.0.0.1:6379/0
       REDIS_TEST_REPLICA_URL: redis://slg-test:test-only@127.0.0.1:6380/0
+      REDIS_TEST_DRILL_URL: redis://slg-drill:drill-local-only@127.0.0.1:6379/0
       REQUIRE_REDIS: "1"   # ledger, concurrency, replica-ack and failover tests must run, not skip
     steps:
       - uses: actions/checkout@v7

@@ -14,6 +14,7 @@ FIELDS = frozenset({
     "input_tokens", "output_tokens", "reserved_usd", "cost_usd",
     "stop_reason", "input_redactions", "output_redactions", "output_redacted",
     "latency_ms", "upstream_ms", "source_ip", "detail", "ledger_id", "sub", "outcome_unknown",
+    "upstream_called", "ledger_outcome",
 })
 MAX_STR = 128
 
