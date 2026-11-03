@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -85,8 +86,9 @@ def main() -> int:
 
     out = ROOT / "docs/evidence/iam-simulation.md"
     out.parent.mkdir(parents=True, exist_ok=True)
+    shown_role = re.sub(r":\d{12}:", ":<account-id>:", role)  # the evidence is published
     lines = [f"# IAM simulation - gateway task role\n",
-             f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `scripts/verify_iam.py` against `{role}`.\n",
+             f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `scripts/verify_iam.py` against `{shown_role}`.\n",
              "Simulation checks the policy logic with the context keys shown; runtime behaviour is "
              "checked separately by `scripts/verify_guardrail.sh`.\n",
              "| Case | Action | Expected | Got | |", "|---|---|---|---|---|"]

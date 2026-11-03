@@ -36,9 +36,10 @@ aws logs get-log-events --log-group-name "/$CLUSTER/gateway" --log-stream-name "
 
 OUT="$ROOT/docs/evidence/ledger-rebuild-drill.md"; mkdir -p "$(dirname "$OUT")"
 "$PY" - "$LOGFILE" "$OUT" "${TASK##*/}" "$EXIT" <<'PYEOF'
-import json, sys
+import json, re, sys
 from datetime import datetime, timezone
 logfile, out, task, exit_code = sys.argv[1:5]
+redact = lambda s: re.sub(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", "<cognito-sub>", s)
 result = None
 for line in json.load(open(logfile)):
     print(line)
@@ -51,7 +52,7 @@ for line in json.load(open(logfile)):
 md = [
     "# Ledger rebuild drill (runtime)",
     "",
-    f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `scripts/drill_ledger_rebuild.sh`: one-off ECS task `{task}`,",
+    f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `scripts/drill_ledger_rebuild.sh`: a one-off ECS task,",
     "dev-only drill task (Valkey user slg-drill, logs-query-only task role), inside the VPC. The team's budget counters were checked against",
     "the audit logs, deleted (simulated data loss), and rebuilt from the logs by the hourly job's code.",
     "",
@@ -63,7 +64,7 @@ elif "refused" in result:
 else:
     md += [f"Team `{result['team']}`, month {result['month']}: **{'passed' if result['passed'] else 'FAILED'}**", "",
            "| Counter | Before | After wipe | After rebuild | |", "|---|---|---|---|---|"]
-    md += [f"| `{c['key']}` | ${c['before_usd']:.6f} | ${c['wiped_usd']:.6f} | ${c['after_usd']:.6f} | "
+    md += [f"| `{redact(c['key'])}` | ${c['before_usd']:.6f} | ${c['wiped_usd']:.6f} | ${c['after_usd']:.6f} | "
            f"{'✅' if c['after_usd'] == c['before_usd'] else '❌'} |" for c in result["counters"]]
     md += ["", f"Rebuild summary: `{json.dumps(result['rebuild'])}`"]
 md += ["", f"Exit code: {exit_code}"]

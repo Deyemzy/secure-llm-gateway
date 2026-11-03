@@ -92,7 +92,7 @@ Each threat is tagged with its STRIDE category and its OWASP LLM ID. The Test co
 | T20 | **I** Output leaks secrets or PII (LLM02, LLM05) | Guardrail output filters, then local redaction. The output-redaction alarm fires at threshold 1 | `test_output_secrets_redacted` |
 | T21 | **E** A compromised task uses its role elsewhere | The role can call `InvokeModel*` only on allowlisted profiles, via our VPCE, with the guardrail; plus `ssm:GetParameter` on one parameter. No NAT. SG egress is limited to the VPCE SG, the S3 prefix list, the Valkey SG and the VPC resolver. Execution and task roles are separate | flow-log `FlowRejects` |
 | T22 | **T** Ledger tampering from elsewhere in the VPC | The Valkey SG admits only the task SG. TLS is required. The `default` user is disabled. The app user is limited to `~slg:*` and the commands the scripts need; it cannot `FLUSHALL`, `KEYS`, `SCAN`, `CONFIG`, `REPLICAOF` or `ACL`. The compose ACL mirrors it, CI runs the ledger as that user, and a test fails if the two drift | `test_acl_matches_terraform`, `test_valkey_gateway_user_is_least_privilege` |
-| T23 | **R** Disputes over who spent what | The `X-Request-Id` a client sees matches the `request_id` in a metadata-only log line (user, team, model, tokens, reserved and actual USD, code). API Gateway access logs record username and IP | `test_request_id_on_errors_and_in_logs`, `test_logs_are_metadata_only` |
+| T23 | **R** Disputes over who spent what | The `X-Request-Id` a client sees matches the `request_id` in a metadata-only log line (user, team, model, tokens, reserved and actual USD, code). API Gateway access logs record username and IP. The audit trail is the KMS-encrypted CloudWatch log group; Object Lock export to a separate log archive account is a roadmap item | `test_request_id_on_errors_and_in_logs`, `test_logs_are_metadata_only` |
 
 ### B4 - Operator and supply chain
 
@@ -143,8 +143,8 @@ Issues found by running the test suites against the deployed stack (2026-10-31),
 | R3 | JWKS is baked at deploy | Re-apply after any Cognito key rotation, or set `JWKS_URL` with a `cognito-idp` endpoint |
 | R4 | Revocation is bounded, not instant: up to 15 minutes (see Revocation section) | Accepted for v1. Next: a `jti`/username denylist in Valkey checked in step 1, for instant revocation |
 | R5 | The input estimate (UTF-8 bytes) over-reserves by roughly 3–4×, so users are refused a little early at month end | Fail-safe by design. Next: Bedrock `CountTokens` |
-| R6 | Not yet verified on AWS: VPC Link v2 + REST → ALB with `integration_target`; the Cognito scope check accepting password-flow access tokens; ElastiCache honouring the ACL and `WAIT` as written | First deploy: `make test-live` against `api_base_url` |
-| R7 | The IAM guardrail deny depends on what Bedrock puts in `bedrock:GuardrailIdentifier` at runtime. Simulation can't show that | First deploy: `make verify-guardrail`, which makes real calls with and without the guardrail from inside the VPC |
+| R6 | Not yet verified on AWS: VPC Link v2 + REST → ALB with `integration_target`; the Cognito scope check accepting password-flow access tokens; ElastiCache honouring the ACL and `WAIT` as written | Verified on AWS 2026-11-03: `make test-live-aws` 27/27, with the ledger holds replica-acknowledged on ElastiCache |
+| R7 | The IAM guardrail deny depends on what Bedrock puts in `bedrock:GuardrailIdentifier` at runtime. Simulation can't show that | Verified on AWS 2026-11-03: `make verify-guardrail` 5/5, real calls with and without the guardrail from inside the VPC |
 | R14 | Unknown outcomes (`charged_unknown`, `expired_charged`) charge the full hold, so users can lose up to one request's ceiling per incident | Deliberate: never guess zero. Counted (`UnknownOutcomes`, `HoldsCharged`). Next: refund the difference automatically from Bedrock invocation logs (`requestMetadata.ledger_id`) |
 | R15 | Retrying an already-completed `Idempotency-Key` returns 409, not the original response (responses are never stored) | Deliberate: metadata-only. Clients should treat 409 `already_completed` as "check your own records" |
 | R8 | Prices in `policy.yaml` are first-party list prices (Claude) or placeholders (Llama) | `open` (Llama) is in no team's allowlist until verified, and a test enforces this on the production policy. Check the Claude prices against Bedrock pricing |
@@ -153,6 +153,9 @@ Issues found by running the test suites against the deployed stack (2026-10-31),
 | R11 | DNS to the VPC resolver could carry low-bandwidth exfiltration | Route 53 Resolver DNS Firewall |
 | R12 | `X-Client-Ip` can be spoofed from inside the VPC | Logs only, never used for decisions |
 | R13 | `aws_api_gateway_account` sets an account-wide logging role | Set `manage_apigw_account_logging_role = false` if another stack owns it |
+| R16 | Indirect prompt injection: instructions hidden in content the caller passes along (documents, web pages, tool output) look like ordinary input to the gateway | Partly mitigated: the Guardrail `PROMPT_ATTACK` filter screens every input, and no tools are exposed, so injected text can't make the gateway act. Detection is probabilistic. Separating trusted from untrusted content belongs in the calling application |
+| R17 | Agent tool permissions: the gateway doesn't decide which tools an AI agent may call or with what arguments | Out of scope: `tools` and `tool_choice` are rejected. Tool authorization belongs in the agent runtime |
+| R18 | The audit trail is the KMS-encrypted CloudWatch log group in the workload account, so an administrator of that account could alter or delete it | Roadmap: Object Lock export to a separate log archive account |
 
 ## 4. Verification
 

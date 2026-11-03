@@ -1,25 +1,72 @@
-# secure-llm-gateway
+# Secure LLM Gateway on AWS
 
-An OpenAI-compatible gateway to Amazon Bedrock. Existing tools and SDKs point at it by changing two settings, the base URL and the key. It enforces:
-- **who** may call: a Cognito JWT, checked at API Gateway and again in the gateway;
-- **what** they may send: a strict schema;
-- **which models** their team may use;
-- **how much** they may spend: atomic monthly budgets in Valkey.
+One private front door for every internal app and developer that uses large language models.
+It decides who can use which model, how much they can spend, and what gets screened and recorded.
 
-It runs in a VPC with **no internet egress**, and every Bedrock call carries a Guardrail that IAM won't let you skip.
+![Secure LLM Gateway architecture: clients reach a REST API with WAF and Cognito, which connects through a private VPC link to a custom FastAPI gateway on ECS Fargate, which calls Amazon Bedrock with Guardrails through VPC endpoints](docs/architecture/secure-llm-gateway-v2.png)
+
+Step by step: [how a request flows](docs/architecture/README.md#how-a-request-flows).
+
+## The problems this solves
+
+When a company starts using AI, the same problems show up within weeks:
+
+- **Keys everywhere.** Each team gets its own provider API key. Keys get copied into scripts,
+  pasted into chats, and never rotated. When someone leaves, nobody knows which keys they had.
+- **Runaway spend.** One buggy loop or one curious engineer can burn through a month's budget
+  in an afternoon, and nobody finds out until the bill arrives.
+- **No accountability.** Nobody can answer "who used which model, how much, and when?"
+- **Unapproved models.** Anyone can call any model, including ones that have not been reviewed
+  for cost, quality, or data handling.
+- **Sensitive data leaks.** Prompts contain customer details, credentials, or internal plans.
+  They get sent to the wrong place, or stored in logs where anyone can read them.
+- **Safety controls that can be skipped.** Each app builds its own content filtering, or none.
+  If filtering lives only in app code, one missed code path bypasses it.
+- **Slow revocation.** A departing employee's access lingers for days.
+
+## How the gateway answers each one
+
+| Problem | Control | Proof |
+|---|---|---|
+| Keys everywhere | No provider keys reach users. Everyone signs in with short-lived Cognito tokens | Forged and malformed tokens rejected in live tests; expired tokens in unit tests |
+| Runaway spend | Per-user and per-team monthly budgets, reserved atomically before every call | 10 concurrent requests cannot overspend; budget exhaustion tested live |
+| No accountability | Every request logged with user, team, model, tokens, and cost | Ledger rebuilt exactly from audit logs in a live drill |
+| Unapproved models | Callers use aliases; an allowlist per team decides which models they get | Wrong-team model requests return 403 live |
+| Sensitive data leaks | Private network only (no internet egress), metadata-only logs, PII masking | Logs verified to contain no prompt or response text |
+| Skippable safety controls | Bedrock Guardrails required by IAM on every model call, not just by app code | 5/5 live probe: calls without our guardrail are denied by AWS |
+| Slow revocation | Token lifetime and policy refresh both capped at 15 minutes | Revocation window tested and documented |
+
+## What this is not
+
+The gateway enforces policy on model calls. It does not, on its own, stop indirect prompt
+injection or decide what tools an AI agent may use. Those belong in the agent runtime.
+See [docs/threat-model.md](docs/threat-model.md#3-residual-risks) for the full list of known gaps.
+
+## Evidence
+
+| What | Result | Source |
+|---|---|---|
+| Unit, pipeline and ledger tests (ledger on real Valkey 8.1 as the least-privilege user, Python 3.12) | **338 passed, 0 skipped**; 31 behaviour claims, all demonstrated | [test-evidence.md](docs/evidence/test-evidence.md), `make evidence`, CI |
+| Live tests against the deployed API (2026-11-03) | **27/27**: auth, schema, model allowlists, $0-budget user refused before Bedrock, same-team user served and charged, cross-team 403, model access denied without charge | `make test-live-aws` |
+| IAM simulation of the gateway task role | **19/19** | [iam-simulation.md](docs/evidence/iam-simulation.md) |
+| Real Bedrock calls from inside the VPC with and without our Guardrail | **5/5**: only our Guardrail on an allowlisted profile is allowed | [guardrail-probe.md](docs/evidence/guardrail-probe.md) |
+| Ledger loss drill on AWS: wipe a team's budget counters, rebuild from logs | **Passed**: restored exactly | [ledger-rebuild-drill.md](docs/evidence/ledger-rebuild-drill.md) |
+
+**Not proven, or out of scope:**
+- `smart` (Sonnet 5.5) is wired and tested, but the test account isn't enabled for it; live it returns `502 upstream_access_denied`.
+- The policy in SSM is validated at startup and on every refresh, but it isn't signed.
+- Single region and no streaming.
+
+Residual risks are listed in [docs/threat-model.md](docs/threat-model.md#3-residual-risks).
 
 Start with:
 - **[docs/threat-model.md](docs/threat-model.md)**: threats, controls, tests and residual risks.
 - **[docs/failure-modes.md](docs/failure-modes.md)**: what happens to the budget ledger under every failure, and the test that proves it.
-- **[docs/evidence/](docs/evidence/)**: generated proof (test evidence, and after a deploy, the IAM simulation and guardrail probe).
-
-```
-client ─▶ WAF ─▶ API Gateway REST (Cognito authorizer) ─VPC Link v2─▶ internal ALB ─▶ FastAPI on Fargate ─PrivateLink─▶ Bedrock Converse + Guardrail
-                                                                                       ├─▶ Valkey (monthly budgets)
-                                                                                       └─▶ SSM (policy)
-```
+- **[docs/evidence/](docs/evidence/)**: generated proof: test evidence, and after a deploy the IAM simulation, guardrail probe and ledger drill.
 
 ## Using it
+
+The API is OpenAI-compatible: existing tools and SDKs point at it by changing two settings, the base URL and the key.
 
 ```python
 from openai import OpenAI
@@ -88,6 +135,15 @@ Retries that send an `Idempotency-Key` can't hold budget twice. Before any money
 
 Limits come from `policy.yaml`, read via SSM, with **user > team > default** precedence. Valkey runs with **cluster mode disabled** because the reserve touches both keys atomically, and in cluster mode those keys would hash to different slots.
 
+## How this was built
+
+1. **Threat model first.** The starting question was what goes wrong when many teams share one model account: overspend, model access beyond a team's allowlist, credentials in prompts, Guardrail bypass, and confused routing. Each became a control with a named test ([threat model](docs/threat-model.md)).
+2. **Proxy replaced by a small gateway.** The first version put an off-the-shelf LLM proxy on Fargate. It accepted routing fields such as `api_base`, served its OpenAPI docs and key-management routes, and its key management expected a database. It was replaced with a FastAPI service whose request schema forbids unknown fields, so routing smuggling is rejected by construction rather than by a deny list.
+3. **The budget ledger was designed around failure, not the happy path.** Reserve-then-settle in Lua, then a written list of every point where a request can die ([failure modes](docs/failure-modes.md)): before the model call, during it, after Bedrock billed but the answer was lost, during a Valkey failover. Each one has a test, and the invariant (settled spend + open holds == counter ≤ limit) is checked under randomized crashes and retries.
+4. **Reviewed in rounds.** Each review finding became a change plus a test: unknown outcomes charge the hold instead of zero, SDK retries disabled, the hold replica-acknowledged before the call, `Idempotency-Key` namespaced per user, a 15-minute revocation window for both tokens and policy, delete commands removed from the gateway's Valkey user.
+5. **Verified in CI, then on AWS.** CI runs the ledger tests on real Valkey with a replica, as the production ACL user, plus gitleaks and `terraform validate`. After deploying, IAM simulation, real Bedrock calls from inside the VPC, black-box live tests and a ledger-loss drill produced the evidence above. The stack was then destroyed.
+6. **Live testing found real issues.** The first live run scored 22/23; the failure was the account's Bedrock quota, not a control, but it showed the live suite didn't cover cross-tenant isolation or budget exhaustion, so those were added. A failing live test printed part of a bearer token in pytest output, so fixtures now redact secrets (finding L1). A test with a hard-coded date broke when the month changed, which led to frozen-clock tests for the month boundary.
+
 ## Layout
 
 ```
@@ -151,3 +207,7 @@ Approximate dev cost in us-east-1:
 - API Gateway, Cognito, KMS and logs: small
 
 Run `make destroy` when you're done.
+
+## License
+
+[MIT](LICENSE)

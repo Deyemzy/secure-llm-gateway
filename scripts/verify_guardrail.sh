@@ -53,7 +53,7 @@ for line in json.load(open(logfile)):
 md = [
     "# Guardrail enforcement probe (runtime)",
     "",
-    f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `scripts/verify_guardrail.sh`: one-off ECS task `{task}`,",
+    f"Generated {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC} by `scripts/verify_guardrail.sh`: a one-off ECS task,",
     "gateway task role, inside the VPC, calling Bedrock Converse **directly** (bypassing the gateway).",
     '"allowed" includes throttling: IAM authorized the call even if capacity was exhausted.',
     'The "another guardrail" case uses the stack\'s decoy guardrail: real, but never ours to use.',
