@@ -67,14 +67,35 @@ CLAIMS = [
      ["test_disaster_drill_valkey_loses_everything", "test_rebuild_restores_enforcement",
       "test_rebuild_never_lowers_the_ledger", "test_raise_floor_only_raises"]),
     ("Rejected policy refresh keeps controls and alarms immediately", ["test_rejected_refresh_raises_alarm_immediately"]),
-    ("Production Valkey ACL == CI ACL", ["test_acl_matches_terraform"]),
+    ("Production Valkey ACLs == CI ACLs (gateway and drill users)", ["test_acl_matches_terraform"]),
     ("Gateway's Valkey user cannot FLUSHALL, KEYS, CONFIG, SCAN, REPLICAOF, ACL or touch non-slg keys",
      ["test_valkey_gateway_user_is_least_privilege"]),
     ("Guardrail probe logic detects a missing IAM guardrail deny", ["test_probe_fails_when_guardrail_not_enforced"]),
+    ("Gateway's Valkey user refused DEL, UNLINK, GETDEL and HDEL; ledger state unchanged; ACL grants no delete command",
+     ["test_valkey_gateway_user_cannot_delete", "test_gateway_acl_grants_no_delete_command"]),
+    ("Drill Valkey user confined to budget counters (no holds, INCRBY, EVAL, FLUSHALL, KEYS, SCAN, CONFIG, ACL, WAIT)",
+     ["test_valkey_drill_user_is_confined_to_budget_counters", "test_valkey_drill_runs_as_drill_user"]),
+    ("Ledger drill: exact restore required, refuses (changing nothing) on open holds or outside dev",
+     ["test_drill_wipes_and_restores_exactly", "test_drill_fails_when_rebuild_does_not_restore",
+      "test_drill_refuses_with_open_hold_and_changes_nothing", "test_drill_refused_outside_dev"]),
+    ("UTC month boundary (frozen clock): fresh budget at Nov 1 00:00:00, October kept; cross-midnight hold settles "
+     "against October", ["test_budget_resets_at_utc_month_boundary",
+                         "test_hold_reserved_in_october_settles_against_october", "test_key_format_is_monthly_utc"]),
+    ("Bedrock AccessDenied -> 502 upstream_access_denied, not retryable, hold released (not charged)",
+     ["test_model_access_denied_is_clean_and_not_charged"]),
+    ("Dev-only live-test overlay can only add, never override, the production policy",
+     ["test_overlay_only_adds_never_overrides", "test_live_test_team_is_dev_only"]),
 ]
+
+# The gateway image is python:3.12-slim (gateway/Dockerfile); evidence must come from the same minor version.
+REQUIRED_PYTHON = (3, 12)
 
 
 def main() -> int:
+    if sys.version_info[:2] != REQUIRED_PYTHON:
+        print(f"evidence must run on Python {'.'.join(map(str, REQUIRED_PYTHON))} (the gateway image's), "
+              f"not {platform.python_version()}: make venv", file=sys.stderr)
+        return 2
     with tempfile.TemporaryDirectory() as d:
         junit = Path(d) / "junit.xml"
         code = subprocess.call([sys.executable, "-m", "pytest", "-q", "-m", "not live", f"--junitxml={junit}",

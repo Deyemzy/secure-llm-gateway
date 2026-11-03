@@ -1,6 +1,6 @@
 # IAM simulation - gateway task role
 
-Generated 2026-10-31 19:57 UTC by `scripts/verify_iam.py` against `arn:aws:iam::830088750088:role/slg-dev-task`.
+Generated 2026-11-03 11:43 UTC by `scripts/verify_iam.py` against `arn:aws:iam::830088750088:role/slg-dev-task`.
 
 Simulation checks the policy logic with the context keys shown; runtime behaviour is checked separately by `scripts/verify_guardrail.sh`.
 

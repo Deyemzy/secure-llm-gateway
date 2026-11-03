@@ -1,6 +1,6 @@
 # Test evidence
 
-Generated 2026-11-03 11:17 UTC by `scripts/evidence.py` (Python 3.14.2, budget store: valkey 8.1.11).
+Generated 2026-11-03 11:45 UTC by `scripts/evidence.py` (Python 3.12.2, budget store: valkey 8.1.11).
 
 **338 passed, 0 failed, 0 skipped.** Ledger tests run against both the in-memory store and the real Lua scripts on Valkey, as the least-privilege `slg-gateway` user.
 
@@ -28,6 +28,12 @@ Generated 2026-11-03 11:17 UTC by `scripts/evidence.py` (Python 3.14.2, budget s
 | No hidden SDK retries that could bill twice against one hold | `test_bedrock_client_never_retries_silently` (1 cases) | ✅ |
 | Valkey loses all data -> hourly rebuild restores spend from audit logs; never lowers the ledger | `test_disaster_drill_valkey_loses_everything`, `test_raise_floor_only_raises`, `test_rebuild_never_lowers_the_ledger`, `test_rebuild_restores_enforcement` (5 cases) | ✅ |
 | Rejected policy refresh keeps controls and alarms immediately | `test_rejected_refresh_raises_alarm_immediately` (1 cases) | ✅ |
-| Production Valkey ACL == CI ACL | `test_acl_matches_terraform` (2 cases) | ✅ |
+| Production Valkey ACLs == CI ACLs (gateway and drill users) | `test_acl_matches_terraform` (2 cases) | ✅ |
 | Gateway's Valkey user cannot FLUSHALL, KEYS, CONFIG, SCAN, REPLICAOF, ACL or touch non-slg keys | `test_valkey_gateway_user_is_least_privilege` (10 cases) | ✅ |
 | Guardrail probe logic detects a missing IAM guardrail deny | `test_probe_fails_when_guardrail_not_enforced` (1 cases) | ✅ |
+| Gateway's Valkey user refused DEL, UNLINK, GETDEL and HDEL; ledger state unchanged; ACL grants no delete command | `test_gateway_acl_grants_no_delete_command`, `test_valkey_gateway_user_cannot_delete` (5 cases) | ✅ |
+| Drill Valkey user confined to budget counters (no holds, INCRBY, EVAL, FLUSHALL, KEYS, SCAN, CONFIG, ACL, WAIT) | `test_valkey_drill_runs_as_drill_user`, `test_valkey_drill_user_is_confined_to_budget_counters` (12 cases) | ✅ |
+| Ledger drill: exact restore required, refuses (changing nothing) on open holds or outside dev | `test_drill_fails_when_rebuild_does_not_restore`, `test_drill_refused_outside_dev`, `test_drill_refuses_with_open_hold_and_changes_nothing`, `test_drill_wipes_and_restores_exactly` (6 cases) | ✅ |
+| UTC month boundary (frozen clock): fresh budget at Nov 1 00:00:00, October kept; cross-midnight hold settles against October | `test_budget_resets_at_utc_month_boundary`, `test_hold_reserved_in_october_settles_against_october`, `test_key_format_is_monthly_utc` (5 cases) | ✅ |
+| Bedrock AccessDenied -> 502 upstream_access_denied, not retryable, hold released (not charged) | `test_model_access_denied_is_clean_and_not_charged` (1 cases) | ✅ |
+| Dev-only live-test overlay can only add, never override, the production policy | `test_live_test_team_is_dev_only`, `test_overlay_only_adds_never_overrides` (2 cases) | ✅ |

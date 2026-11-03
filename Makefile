@@ -4,6 +4,8 @@ AWS_REGION  ?= us-east-1
 TAG         ?= v0.4.0
 TF          := terraform -chdir=terraform/envs/dev
 PY          := .venv/bin/python
+# Same minor version as the gateway image (python:3.12-slim) and CI; scripts/evidence.py enforces it.
+PYTHON      ?= python3.12
 
 .PHONY: test-live-aws drill-ledger-rebuild init bootstrap-init hooks secrets-scan venv test test-redis test-live evidence verify-iam verify-guardrail run-local valkey-up valkey-down fmt validate plan apply destroy push redeploy logs
 
@@ -22,7 +24,7 @@ secrets-scan:         ## gitleaks over full history + the files that would be co
 	  gitleaks dir --redact --no-banner $$tmp; rc=$$?; rm -rf $$tmp; exit $$rc
 
 venv:
-	python3 -m venv .venv && .venv/bin/pip install -q -r gateway/requirements.txt pytest httpx openai
+	$(PYTHON) -m venv .venv && .venv/bin/pip install -q -r gateway/requirements.txt pytest httpx openai
 
 test:                 ## unit + pipeline abuse tests (no AWS, no Redis)
 	$(PY) -m pytest -q -m "not live"
